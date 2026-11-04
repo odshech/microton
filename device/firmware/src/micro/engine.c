@@ -257,26 +257,42 @@ static inline int32_t blep4(int32_t t)
         return -((u4 * 1365) >> 15);
     }
 }
-/* a saw, band-limited at its wrap (a step of -2): rinv = 2^31 / (inc >> 8) */
-static inline int32_t saw(uint32_t p, uint32_t inc, uint32_t rinv)
+/* a saw, band-limited at its wrap (a step of -2): rinv = 2^31 / (inc >> 8).
+ * The correction touches two samples on each side of the wrap: out of line, so the plain ramp stays a few
+ * instructions inline (the FM-1 build is -Os: a call per sample per saw cost more than the rest of the voice). */
+#if defined(__GNUC__) || defined(__clang__)
+#define ENG_INLINE static inline __attribute__((always_inline))
+#define ENG_NOINLINE static __attribute__((noinline))
+#else
+#define ENG_INLINE static inline
+#define ENG_NOINLINE static
+#endif
+ENG_NOINLINE int32_t saw_edge(uint32_t p, uint32_t two, uint32_t rinv)
 {
-    int32_t s = (int32_t)(p >> 16) - 32768;
-    uint32_t two = inc << 1, q = 0u - p;
+    int32_t c = 0;
+    uint32_t q = 0u - p;
     if (p < two) {                                                       /* just after the wrap */
         u64 t = ((u64)(p >> 8) * rinv) >> 16;
-        if (t < 65536u) s -= 2 * blep4((int32_t)t);
+        if (t < 65536u) c -= 2 * blep4((int32_t)t);
     }
     if (p && q < two) {                                                  /* just before the next one */
         u64 t = ((u64)(q >> 8) * rinv) >> 16;
-        if (t < 65536u) s += 2 * blep4((int32_t)t);
+        if (t < 65536u) c += 2 * blep4((int32_t)t);
     }
+    return c;
+}
+ENG_INLINE int32_t saw(uint32_t p, uint32_t inc, uint32_t rinv)
+{
+    int32_t s = (int32_t)(p >> 16) - 32768;
+    uint32_t two = inc << 1;
+    if (p < two || 0u - p < two) s += saw_edge(p, two, rinv);
     return s;
 }
-static inline int32_t pulse(uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
+ENG_INLINE int32_t pulse(uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
 {
     return saw(p, inc, rinv) - saw(p + pw, inc, rinv) + ((int32_t)(pw >> 16) - 32768);
 }
-static inline int32_t shape(uint32_t s, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
+ENG_INLINE int32_t shape(uint32_t s, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
 {
     switch (s) {
     case 0: return sine(p);
@@ -286,7 +302,7 @@ static inline int32_t shape(uint32_t s, uint32_t p, uint32_t inc, uint32_t rinv,
     }
 }
 /* the continuous wave: 0 sine, 4096 triangle, 8192 saw, 12288 pulse */
-static inline int32_t osc(int32_t pos, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
+ENG_INLINE int32_t osc(int32_t pos, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
 {
     uint32_t s = (uint32_t)pos >> 12, f = (uint32_t)pos & 4095u;
     int32_t a = shape(s, p, inc, rinv, pw), b;
@@ -302,9 +318,9 @@ static inline int32_t sat(int32_t x)
     int32_t u, u3;
     if (x >= 49152) return 32768;
     if (x <= -49152) return -32768;
-    u = (x * 21845) >> 15;                                               /* x / 49152, Q15 */
-    u3 = (int32_t)((((i64)u * u >> 15) * u) >> 15);
-    return (int32_t)(((i64)49152 * (u - u3 / 3)) >> 15);
+    u = (x * 21845) >> 15;                                               /* x / 49152, Q15: |u| < 2^15 */
+    u3 = (((u * u) >> 15) * u) >> 15;                                    /* every product under 2^30 */
+    return (49152 * (u - ((u3 * 10923) >> 15))) >> 15;                   /* u - u^3/3, no division */
 }
 
 /* ------------------------------------------------------------------ voices */
@@ -724,6 +740,24 @@ void eng_rt_commit(void)
     for (p = 0; p < ENG_PARTS; p++) if (dirty[p]) { dirty[p] = 0; derive(p); }
 }
 
+/* overload: the audio interrupt asks for one voice less. The quietest released voice goes, else the oldest;
+ * its amplitude ramps to zero within the next block (no click). Audio context only. 1 = a voice went */
+int eng_rt_shed(void)
+{
+    uint32_t i, best = ENG_VOICES;
+    int32_t bs = 0x7FFFFFFF, score;
+    for (i = 0; i < ENG_VOICES; i++) {
+        voice_t *v = &V[i];
+        if (v->env[0].stage == ST_IDLE) continue;
+        score = v->gate ? v->age : (v->env[0].level >> 2) - 0x40000000;
+        if (score < bs) { bs = score; best = i; }
+    }
+    if (best == ENG_VOICES) return 0;
+    for (i = 0; i < 3u; i++) { V[best].env[i].stage = ST_IDLE; V[best].env[i].level = 0; }
+    V[best].gate = 0;
+    return 1;
+}
+
 uint32_t eng_voices_active(void)
 {
     uint32_t i, n = 0;
@@ -734,9 +768,9 @@ uint32_t eng_voices_active(void)
 void eng_render(int32_t *out, uint32_t n)
 {
     static int32_t bus[ENG_PARTS][2 * ENG_BLOCK];
-    static i64 dc[2];                                                    /* DC blocker state, Q12 */
+    static int32_t dc[2];                                                /* DC blocker state, Q8 */
     const scale_t *sc = &SC[sc_active];
-    uint32_t b, i, p;
+    uint32_t b, i, p, live;
 
     while (ev_tail != ev_head) {
         const ev_t *e = &evq[ev_tail];
@@ -756,7 +790,7 @@ void eng_render(int32_t *out, uint32_t n)
 
     for (b = 0; b + ENG_BLOCK <= n; b += ENG_BLOCK) {
         if (eng_rt_hook) { eng_rt_hook(ENG_BLOCK); eng_rt_commit(); }   /* the sequencer, block by block */
-        for (p = 0; p < ENG_PARTS; p++) for (i = 0; i < 2u * ENG_BLOCK; i++) bus[p][i] = 0;
+        live = 0;                                                        /* the parts with a voice this block */
         for (p = 0; p < ENG_PARTS; p++)
             for (i = 0; i < 2u; i++) lfo_step(&glph[p][i], &glval[p][i], &glsh[p][i], D[p].lfo[i].shape, D[p].lfo[i].inc);
         for (i = 0; i < ENG_VOICES; i++) {
@@ -769,21 +803,29 @@ void eng_render(int32_t *out, uint32_t n)
                 v->uni_c16 = (X->uni_det_c16 * j) / (X->uni_n - 1);
                 v->uni_pan = ((X->uni_spread * j) / (X->uni_n - 1)) >> 1;
             } else v->uni_c16 = v->uni_pan = 0;
+            if (!(live & (1u << v->part))) {                             /* its part's first voice: clear the bus */
+                int32_t *bp = bus[v->part];
+                live |= 1u << v->part;
+                for (p = 0; p < 2u * ENG_BLOCK; p++) bp[p] = 0;
+            }
             voice_tick(v, sc, i);
             voice_run(v, bus[v->part]);
         }
+        for (p = 0; p < ENG_PARTS; p++)                                  /* each part's output stage, once per sample */
+            if ((live & (1u << p)) && D[p].out_sat) {
+                int32_t *bp = bus[p], os = D[p].out_sat;
+                for (i = 0; i < 2u * ENG_BLOCK; i++) { int32_t y = bp[i]; bp[i] = y + (int32_t)(((i64)(sat(y + (y >> 1)) - y) * os) >> 15); }
+            }
         for (i = 0; i < ENG_BLOCK; i++) {
             uint32_t c;
             for (c = 0; c < 2u; c++) {
                 int32_t x = 0;
-                for (p = 0; p < ENG_PARTS; p++) {
-                    int32_t y = bus[p][2 * i + c];
-                    if (D[p].out_sat) y += (int32_t)(((i64)(sat(y + (y >> 1)) - y) * D[p].out_sat) >> 15);
-                    x += y;
-                }
-                dc[c] += (((i64)x << 12) - dc[c]) * 75 >> 16;                    /* coupling cap: ~8 Hz */
-                if (x == 0 && dc[c] > -8192 && dc[c] < 8192) dc[c] = 0;         /* settle on true silence */
-                x -= (int32_t)(dc[c] >> 12);
+                for (p = 0; p < ENG_PARTS; p++) if (live & (1u << p)) x += bus[p][2 * i + c];
+                if (x > 4194303) x = 4194303;                                    /* keeps x << 8 in 32 bits */
+                if (x < -4194304) x = -4194304;
+                dc[c] += ((x << 8) - dc[c]) >> 10;                               /* coupling cap: ~7 Hz */
+                if (x == 0 && dc[c] > -2048 && dc[c] < 2048) dc[c] = 0;         /* settle on true silence */
+                x -= dc[c] >> 8;
                 out[2u * (b + i) + c] += x;
             }
         }

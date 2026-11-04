@@ -56,3 +56,4 @@ int eng_set_scale_c16(uint32_t n, const int32_t *c16);
 int eng_scale_from_lib(const uint8_t *lib, uint32_t len, uint32_t index);
 uint32_t eng_scale_degrees(void);
 uint32_t eng_voices_active(void);
+int eng_rt_shed(void);                        /* audio context: drop one voice (overload); 1 = done */

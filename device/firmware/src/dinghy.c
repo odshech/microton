@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* MICROTON 0.1 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
+/* MICROTON 0.2 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
  * A test firmware: it plays, and it measures. The screen shows the battery and the audio engine's CPU load.
  *
  *   white keys     the 16 degrees of the window; 3 sounds share 8 voices (part 1 on the keys)
@@ -8,7 +8,7 @@
  *   OCT- OCT+      period - / +
  *   PLAY           the sequencer: the demo pattern, three parts
  *   REC            the load test: 8 voices of the heaviest sound, held
- *   HOME           clears the peak load
+ *   HOME           clears the peak load and the count of voices dropped for load (CUT n)
  *   KNOB 1..4      cutoff, resonance, envelope 1 release, drive (part 1)
  *   PRESETS        the scale          SELECT  the tempo
  *   MIDI in        notes on the white-key map (C4 = the window's first degree), bend, mod wheel, NRPN = parameters
@@ -25,17 +25,22 @@ static void app_idle(void);
 static uint32_t fm1_ticks(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint32_t)((uint64_t)t.tv_sec * 24000000u + (uint64_t)t.tv_nsec * 24u / 1000u); }
 static int32_t fm1_adc_read(int ch) { return ch == FM1_ADC_BATT ? 572 : -1; }
 #endif
-#define SEQ_PATTERNS 4u                         /* 4 patterns in RAM on the FM-1 for now (12 KB each, in the pool) */
-#define SEQ_POOL __attribute__((section(".pool")))
-#include "micro/engine.c"
-#include "micro/tuning.c"
-#include "micro/seq.c"
+#include "micro/config.h"
+#ifdef DINGHY_HOST
+#include "micro_unit.c"                         /* one file on a computer */
+#else
+#include "micro/engine.h"                       /* on the FM-1: its own unit at -O2 (micro_unit.c, tools/build.py) */
+#include "micro/tuning.h"
+#include "micro/seq.h"
+#endif
 #include "micro/scales_lib.h"
 #include "micro/atan_table.h"
 
 /* ---- the audio interrupt: the engine (the sequencer runs inside it), and how long it took */
 #define BUDGET_PER_FRAME 544u                   /* 24 MHz ticks per frame at 44.1 kHz (24 000 000 / 44 100) */
 static volatile uint32_t load_avg, load_peak, load_last;   /* per mille of the time one buffer lasts */
+static volatile uint32_t shed_count;            /* voices dropped for load since HOME */
+#define SHED_AT 850u                            /* over 85 %: one voice less, so the main loop keeps running */
 
 static void app_audio(int32_t *out, uint32_t n)
 {
@@ -46,6 +51,7 @@ static void app_audio(int32_t *out, uint32_t n)
     load_last = pm;
     load_avg += (int32_t)(pm - load_avg) / 16;  /* a smooth average, ~0.1 s */
     if (pm > load_peak) load_peak = pm;
+    if (pm > SHED_AT && eng_rt_shed()) shed_count++;
 }
 
 /* ---- state (main loop) */
@@ -126,7 +132,7 @@ static void stress_set(int on)
     } else {
         for (i = 0; i < 8u; i++) eng_note_off(0, DEG[i]);
     }
-    load_peak = 0;
+    load_peak = 0; shed_count = 0;
 }
 
 /* ---- the battery: a slow average of the raw voltage; four levels as Felucca reads them */
@@ -254,7 +260,8 @@ static void draw_load(uint32_t avg, uint32_t peak)
     char b[48], *p = b;
     uint32_t us = (avg * 5805u) / 1000u;         /* of the 5805 us a 256-frame buffer lasts */
     p = put(p, "DSP "); p = putn(p, avg / 10u); p = put(p, "%  PEAK "); p = putn(p, peak / 10u);
-    p = put(p, "%  "); p = putn(p, us / 1000u); *p++ = '.'; p = putn(p, us / 100u % 10u); p = put(p, " MS");
+    if (shed_count) { p = put(p, "%  CUT "); p = putn(p, shed_count); }     /* voices dropped for load */
+    else { p = put(p, "%  "); p = putn(p, us / 1000u); *p++ = '.'; p = putn(p, us / 100u % 10u); p = put(p, " MS"); }
     *p = 0;
     draw_line(212, b, peak >= 800u ? M_RED : peak >= 500u ? M_AMB : M_OK);
 }
@@ -375,7 +382,7 @@ static void app_main(void)
         if (b & (1u << BTN_OCT_UP)) { win += (int32_t)n; scale_dirty = 1; }
         if (b & (1u << BTN_PLAY)) { if (playing_seq) seq_stop(); else seq_play(); playing_seq = !playing_seq; }
         if (b & (1u << BTN_REC)) { stress = !stress; stress_set(stress); }
-        if (b & (1u << BTN_HOME)) load_peak = 0;
+        if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; }
 
         /* encoders */
         knob(ENC_KNOB1, P_CUTOFF, 160);
@@ -416,7 +423,7 @@ static void app_main(void)
         if (scale_dirty) { scale_dirty = 0; draw_scale(); }
         if (fm1_ms - t_draw > 100u) {
             uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | seq_tempo() << 2;
-            uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10;
+            uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10 | (shed_count & 0xFFu) << 20;
             t_draw = fm1_ms;
             if (v != voices_drawn || sq != seq_drawn) { voices_drawn = v; seq_drawn = sq; draw_seq(v); }
             if (ld != load_drawn) { load_drawn = ld; draw_load(load_avg, load_peak); }
