@@ -821,8 +821,8 @@ void eng_render(int32_t *out, uint32_t n)
             for (c = 0; c < 2u; c++) {
                 int32_t x = 0;
                 for (p = 0; p < ENG_PARTS; p++) if (live & (1u << p)) x += bus[p][2 * i + c];
-                if (x > 4194303) x = 4194303;                                    /* keeps x << 8 in 32 bits */
-                if (x < -4194304) x = -4194304;
+                if (x > 2097151) x = 2097151;                                    /* keeps x << 8 in 32 bits */
+                if (x < -2097152) x = -2097152;
                 dc[c] += ((x << 8) - dc[c]) >> 10;                               /* coupling cap: ~7 Hz */
                 if (x == 0 && dc[c] > -2048 && dc[c] < 2048) dc[c] = 0;         /* settle on true silence */
                 x -= dc[c] >> 8;
