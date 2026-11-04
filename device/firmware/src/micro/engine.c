@@ -230,9 +230,9 @@ uint32_t eng_scale_degrees(void) { return SC[sc_active].n; }
 
 /* ------------------------------------------------------------------ oscillators */
 
-static uint32_t rng = 0x9E3779B9u;
-static inline uint32_t rnd(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
-static inline int32_t rnd_q15(void) { return (int32_t)(rnd() >> 16) - 32768; }
+static uint32_t eng_rng_s = 0x9E3779B9u;
+static inline uint32_t eng_rnd(void) { eng_rng_s ^= eng_rng_s << 13; eng_rng_s ^= eng_rng_s >> 17; eng_rng_s ^= eng_rng_s << 5; return eng_rng_s; }
+static inline int32_t rnd_q15(void) { return (int32_t)(eng_rnd() >> 16) - 32768; }
 
 static inline int32_t sine(uint32_t p)
 {
@@ -664,7 +664,7 @@ void eng_init(void)
         voice_t *v = &V[i];
         uint32_t z, *w = (uint32_t *)v;
         for (z = 0; z < sizeof(voice_t) / 4u; z++) w[z] = 0u;
-        v->p[0] = rnd(); v->p[1] = rnd(); v->p[2] = rnd();             /* free running, like analog */
+        v->p[0] = eng_rnd(); v->p[1] = eng_rnd(); v->p[2] = eng_rnd();             /* free running, like analog */
         v->vcut = rnd_q15(); v->vtime = rnd_q15();
         v->g = 30000; v->uni = -1;
     }
