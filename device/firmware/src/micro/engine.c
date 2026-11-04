@@ -690,8 +690,12 @@ static void voice_run(voice_t *v, int32_t *bus)
 
 /* ------------------------------------------------------------------ public */
 
+/* the audio interrupt may start before eng_init (Dinghy enables it before app_main): render nothing until ready */
+static volatile int eng_ready;
+
 void eng_init(void)
 {
+    eng_ready = 0;
     uint32_t i, p;
     static const int32_t edo12[12] = {1600, 3200, 4800, 6400, 8000, 9600, 11200, 12800, 14400, 16000, 17600, 19200};
     for (p = 0; p < ENG_PARTS; p++) {
@@ -714,6 +718,7 @@ void eng_init(void)
     eng_rt_hook = 0;
     drums_init();
     fx_init();
+    eng_ready = 1;
 }
 
 void eng_drum_hit(uint32_t drum, uint32_t velocity) { push(EV_DRUM, drum, 0, (int32_t)velocity); }
@@ -802,6 +807,7 @@ void eng_render(int32_t *out, uint32_t n)
     static int32_t mix[2 * ENG_BLOCK], srev[ENG_BLOCK], sdly[ENG_BLOCK];
     const scale_t *sc = &SC[sc_active];
     uint32_t b, i, p, live;
+    if (!eng_ready) return;                                              /* before eng_init: silence */
 
     while (ev_tail != ev_head) {
         const ev_t *e = &evq[ev_tail];
