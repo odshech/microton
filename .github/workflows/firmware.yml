@@ -68,7 +68,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p /tmp/out/screens
-          cp device/build/microton.fwsc device/build-log.txt /tmp/out/
+          cp device/build/microton.fwsc device/build-log.txt device/build/dinghy.dis /tmp/out/
           cp device/build/host/*.png /tmp/out/screens/
           cd /tmp/out
           git init -q -b firmware
