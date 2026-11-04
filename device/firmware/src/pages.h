@@ -14,7 +14,7 @@ enum { T_SYN, T_DRUM, T_FX };
 enum {
     F_PCT, F_BIP, F_PAN, F_WAVE, F_PW, F_DEG, F_C100, F_X8, F_X4, F_CUT, F_HPF, F_OCT8, F_OCT4, F_TIME, F_TIMEOFF,
     F_CURVE, F_LFO, F_C50, F_C10, F_DTUNE, F_ST, F_NCUT, F_DEC, F_PRE, F_FB110, F_DTIME, F_DTONE, F_DLC, F_X8OFF,
-    F_OPT
+    F_HOLD, F_OPT
 };
 typedef struct { const char *name; uint8_t fmt; uint16_t id; const char *const *opts; } pdesc_t;
 typedef struct { const char *title; pdesc_t p[4]; } bank_t;
@@ -84,7 +84,7 @@ static const bank_t B_DRUM[] = {
     {"NOISE", {{"NOISE", F_PCT, DP_NOISE, 0}, {"METAL", F_PCT, DP_METAL, 0}, {"NOISE DECAY", F_TIME, DP_NOISE_DEC, 0}, {"CLAP", F_OPT, DP_CLAP, O_CLAP}}},
     {"NOISE FILTER", {{"TYPE", F_OPT, DP_NOISE_MODE, O_NMODE}, {"CUTOFF", F_NCUT, DP_NOISE_CUT, 0}, {"RESONANCE", F_PCT, DP_NOISE_RESO, 0}, {"TONE LEVEL", F_PCT, DP_TONE, 0}}},
     {"OUTPUT", {{"LEVEL", F_PCT, DP_LEVEL, 0}, {"PAN", F_PAN, DP_PAN, 0}, {"REVERB SEND", F_PCT, DP_REV, 0}, {"DELAY SEND", F_PCT, DP_DLY, 0}}},
-    {"MORE", {{"DRIVE", F_X8OFF, DP_DRIVE, 0}, {"CHOKE", F_OPT, DP_CHOKE, O_CHOKE}, NONE_P, NONE_P}},
+    {"MORE", {{"HOLD", F_HOLD, DP_HOLD, 0}, {"DRIVE", F_X8OFF, DP_DRIVE, 0}, {"CHOKE", F_OPT, DP_CHOKE, O_CHOKE}, NONE_P}},
 };
 #define NB(a) (uint8_t)(sizeof a / sizeof a[0])
 static const page_t PAGES[] = {
@@ -191,6 +191,7 @@ static char *fmt_value(char *p, const pdesc_t *d, uint32_t r)
     case F_DTIME: p = putms(p, (uint32_t)((10000u * exp2q(r * 27629u / 1000u)) >> 16)); break;   /* 10 ms x 120^(r/16383) */
     case F_DTONE: p = puthz(p, 3000u + r * 10000u / 16383u); break;
     case F_DLC: p = puthz(p, 2400u + r * 6000u / 16383u); break;
+    case F_HOLD: if (!r) p = put(p, "OFF"); else { p = putn(p, r * 200u / 16383u); p = put(p, " ms"); } break;
     case F_OPT: p = put(p, d->opts[r]); break;
     default: p = putn(p, r); break;
     }
@@ -198,39 +199,49 @@ static char *fmt_value(char *p, const pdesc_t *d, uint32_t r)
     return p;
 }
 
-/* ---- the panel: 240 x 120 where the wheel is */
+/* ---- the panel: the whole middle of the screen (y 26 .. 210), drawn in two strips */
+#define PANEL_Y 26
+#define PANEL_H 184                             /* down to the load line (y 212) */
+static void upcase(char *t) { for (; *t; t++) if (*t >= 'a' && *t <= 'z') *t = (char)(*t - 32); }
+/* one parameter: its number and name small, its value big on the right, a bar under */
+static void draw_row(int32_t y, uint32_t k, const pdesc_t *d)
+{
+    char t[48], *p = t;
+    uint32_t v, mx, w;
+    if (!d->name) return;
+    v = p_get(d); mx = p_max(d);
+    *p++ = (char)('1' + k); *p++ = ' '; p = put(p, d->name); *p = 0;
+    cv_text(6, y + 2, &FONT_S, t, M_DIM);
+    fmt_value(t, d, v); upcase(t);
+    if (text_w(&FONT_L, t) <= 150) cv_text(236 - text_w(&FONT_L, t), y + 2, &FONT_L, t, M_TXT);
+    else cv_text(236 - text_w(&FONT_S, t), y + 18, &FONT_S, t, M_TXT);     /* too long for the big font */
+    cv_rect(6, y + 36, 228, 3, RGB(48, 18, 18));
+    w = mx ? (v * 228u) / mx : 0u;
+    if (d->fmt == F_BIP || d->fmt == F_PAN || d->fmt == F_C100 || d->fmt == F_OCT8 || d->fmt == F_OCT4) {
+        uint32_t c = 114u;                                              /* from the centre */
+        if (w >= c) cv_rect(6 + (int32_t)c, y + 36, (int32_t)(w - c) + 1, 3, M_RED);
+        else cv_rect(6 + (int32_t)w, y + 36, (int32_t)(c - w), 3, M_RED);
+    } else if (w) cv_rect(6, y + 36, (int32_t)w, 3, M_RED);
+}
 static void draw_panel(void)
 {
     const page_t *P = &PAGES[pg];
     const bank_t *B = &P->banks[pg_bank];
     char t[48], *p = t;
-    uint32_t k;
-    cv_begin(240, 120, C_BLACK);
+    cv_begin(240, 96, C_BLACK);                                         /* the title and rows 1, 2 */
     if (P->target == T_SYN) { p = put(p, "SOUND "); p = putn(p, pg_part + 1u); *p++ = ' '; }
     else if (P->target == T_DRUM) { p = put(p, DRUM_NAME[pg_drum]); *p++ = ' '; }
     p = put(p, B->title); *p = 0;
     cv_text(6, 1, &FONT_S, t, M_RED);
     p = t; p = putn(p, pg_bank + 1u); *p++ = '/'; p = putn(p, P->nbanks); *p = 0;
     cv_text(234 - text_w(&FONT_S, t), 1, &FONT_S, t, M_DIM);
-    for (k = 0; k < 4u; k++) {
-        const pdesc_t *d = &B->p[k];
-        int32_t y = 22 + (int32_t)k * 24;
-        uint32_t v, mx, w;
-        if (!d->name) continue;
-        v = p_get(d); mx = p_max(d);
-        p = t; *p++ = (char)('1' + k); *p++ = ' '; p = put(p, d->name); *p = 0;
-        cv_text(6, y, &FONT_S, t, M_DIM);
-        fmt_value(t, d, v);
-        cv_text(234 - text_w(&FONT_S, t), y, &FONT_S, t, M_TXT);
-        cv_rect(6, y + 18, 228, 2, RGB(48, 18, 18));
-        w = mx ? (v * 228u) / mx : 0u;
-        if (d->fmt == F_BIP || d->fmt == F_PAN || d->fmt == F_C100 || d->fmt == F_OCT8 || d->fmt == F_OCT4) {
-            uint32_t c = 114u;                                          /* from the centre */
-            if (w >= c) cv_rect(6 + (int32_t)c, y + 18, (int32_t)(w - c) + 1, 2, M_RED);
-            else cv_rect(6 + (int32_t)w, y + 18, (int32_t)(c - w), 2, M_RED);
-        } else if (w) cv_rect(6, y + 18, (int32_t)w, 2, M_RED);
-    }
-    cv_blit(0, 26);
+    draw_row(18, 0, &B->p[0]);
+    draw_row(57, 1, &B->p[1]);
+    cv_blit(0, PANEL_Y);
+    cv_begin(240, PANEL_H - 96, C_BLACK);                               /* rows 3, 4 */
+    draw_row(0, 2, &B->p[2]);
+    draw_row(39, 3, &B->p[3]);
+    cv_blit(0, PANEL_Y + 96);
 }
 
 /* the knobs on the open page: 1 = something changed */

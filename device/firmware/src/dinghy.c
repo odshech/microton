@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* MICROTON 0.4 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
+/* MICROTON 0.6 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
  * A test firmware: it plays, and it measures. The screen shows the battery and the audio engine's CPU load.
  *
  *   white keys     the 16 degrees of the window; 3 sounds share 8 voices (part 1 on the keys)
  *   black keys     1 window -  2 window +  3 period -  4 period +  5 hold  7 mode -  8 mode +
  *                  9 scale -  10 scale +  11 all notes off          (left to right; 6 is free)
  *   OCT- OCT+      period - / +
- *   PLAY           the sequencer: the demo pattern, three parts and the drums
+ *   PLAY           the sequencer (empty at start)
+ *   SEQ            the sequencer page (seqpage.h): the white keys are the 16 steps, hold one to edit it
  *   REC            the load test: 8 voices of the heaviest sound, held
- *   HOME           clears the peak load and the count of voices dropped for load (CUT n)
+ *   HOME           closes an edit page; on the wheel, switches the bottom line to the load by section; clears the peak
  *   KNOB 1..4      cutoff, resonance, envelope 1 release, drive (part 1)
  *   EDIT SEL ENV LFO GLO FX ARP   edit pages (pages.h): oscillators, filter, envelopes, LFOs and modulation,
  *                  voice and output, reverb and delay, drums. Press again (or turn ALGORITHM) for the next bank;
@@ -84,50 +85,6 @@ static const char *scale_name(uint32_t idx, char *buf)  /* the short name stored
     return buf;
 }
 
-/* ---- the demo pattern: an arpeggio (part 1), a bass that slides (part 2, mono), chords (part 3) */
-static void demo(void)
-{
-    uint32_t s, n = tun_degrees();
-    static const uint8_t ARP[16] = {0, 4, 7, 11, 13, 11, 7, 4, 0, 4, 7, 13, 16, 13, 11, 7};
-    for (s = 0; s < 16u; s++) {
-        int32_t a = (int32_t)(ARP[s] * n / 22u);
-        seq_step_set(0, TR_SYN1, s, SF_ON, 1);
-        seq_step_set(0, TR_SYN1, s, SF_DEG0, a % (int32_t)n);
-        seq_step_set(0, TR_SYN1, s, SF_PER0, a / (int32_t)n);
-        seq_step_set(0, TR_SYN1, s, SF_GATE, 6);
-    }
-    for (s = 0; s < 16u; s += 2u) {
-        seq_step_set(0, TR_SYN2, s, SF_ON, 1);
-        seq_step_set(0, TR_SYN2, s, SF_DEG0, (int32_t)((s % 8u == 6u ? 9u : 0u) * n / 22u));
-        seq_step_set(0, TR_SYN2, s, SF_PER0, -1);
-        seq_step_set(0, TR_SYN2, s, SF_SLIDE, s % 8u == 4u);
-    }
-    for (s = 0; s < 16u; s += 4u) {
-        seq_step_set(0, TR_SYN3, s, SF_ON, 1);
-        seq_step_set(0, TR_SYN3, s, SF_NOTES, 3);
-        seq_step_set(0, TR_SYN3, s, SF_DEG0, 0);
-        seq_step_set(0, TR_SYN3, s, SF_DEG1, (int32_t)(7u * n / 22u));
-        seq_step_set(0, TR_SYN3, s, SF_DEG2, (int32_t)(13u * n / 22u));
-        seq_step_set(0, TR_SYN3, s, SF_GATE, 16);
-        seq_step_set(0, TR_SYN3, s, SF_VEL, 70);
-    }
-    /* drums: kick, snare, closed and open hat on track A (a mask of 4), clap and rim on track B */
-    for (s = 0; s < 16u; s++) {
-        uint32_t a = (s % 4u == 0u ? 1u : 0u) | (s % 8u == 4u ? 2u : 0u) | (s % 2u == 0u && s != 14u ? 4u : 0u) | (s == 14u ? 8u : 0u);
-        uint32_t bm = (s == 12u ? 1u : 0u) | (s == 3u || s == 7u || s == 11u ? 8u : 0u);
-        if (s == 10u) a |= 1u;
-        if (a) { seq_step_set(0, TR_DRUM_A, s, SF_ON, 1); seq_step_set(0, TR_DRUM_A, s, SF_NOTES, (int32_t)a); seq_step_set(0, TR_DRUM_A, s, SF_DEG0, (int32_t)a);
-                 seq_step_set(0, TR_DRUM_A, s, SF_VEL, s % 4u == 2u ? 80 : 110); }
-        if (bm) { seq_step_set(0, TR_DRUM_B, s, SF_ON, 1); seq_step_set(0, TR_DRUM_B, s, SF_NOTES, (int32_t)bm); seq_step_set(0, TR_DRUM_B, s, SF_DEG0, (int32_t)bm);
-                  seq_step_set(0, TR_DRUM_B, s, SF_VEL, 90); }
-    }
-    eng_set_param(1, P_VOICE_MODE, 1);          /* the bass: mono, so its slides glide */
-    eng_set_param(1, P_CUTOFF, 6500);
-    eng_set_param(1, P_O1_WAVE, 16383);
-    eng_set_param(2, P_E1_A, 6000);             /* the chords: slower */
-    eng_set_param(2, P_E1_R, 9000);
-    eng_set_param(2, P_VOLUME, 9000);
-}
 /* the load test: the most expensive voice there is, eight times */
 static void stress_set(int on)
 {
@@ -269,8 +226,26 @@ static void draw_seq(uint32_t voices)
     *p = 0;
     draw_line(190, b, stress ? M_AMB : M_DIM);
 }
+/* the load by section, in % of real time, every half second (HOME on the wheel switches to it) */
+static int load_split;
+static uint32_t split_pct[ENG_PROF_N], split_t0;
+static void split_update(void)
+{
+    uint32_t now = fm1_ticks(), dt = now - split_t0, k;
+    if (dt < 12000000u) return;                                   /* 0.5 s of 24 MHz */
+    for (k = 0; k < ENG_PROF_N; k++) { split_pct[k] = (uint32_t)(((uint64_t)eng_prof[k] * 100u) / dt); eng_prof[k] = 0; }
+    split_t0 = now;
+}
 static void draw_load(uint32_t avg, uint32_t peak)
 {
+    if (load_split) {
+        char b[48], *p = b;
+        p = put(p, "SYN "); p = putn(p, split_pct[ENG_PROF_SYNTH]); p = put(p, " DRM "); p = putn(p, split_pct[ENG_PROF_DRUMS]);
+        p = put(p, " DLY "); p = putn(p, split_pct[ENG_PROF_DELAY]); p = put(p, " REV "); p = putn(p, split_pct[ENG_PROF_REVERB]);
+        *p = 0;
+        draw_line(212, b, M_AMB);
+        return;
+    }
     char b[48], *p = b;
     uint32_t us = (avg * 5805u) / 1000u;         /* of the 5805 us a 256-frame buffer lasts */
     p = put(p, "DSP "); p = putn(p, avg / 10u); p = put(p, "%  PEAK "); p = putn(p, peak / 10u);
@@ -347,15 +322,16 @@ static void knob(uint32_t enc, uint32_t id, int32_t step)
 }
 
 #include "pages.h"
+#include "seqpage.h"
 
 static void app_main(void)
 {
     uint32_t prev = 0, k, b, rel, t_draw = 0, t_hdr = 0, voices_drawn = ~0u, seq_drawn = ~0u, load_drawn = ~0u;
-    int scale_dirty = 1, wheel_dirty = 1, panel_dirty = 0;
+    int scale_dirty = 1, wheel_dirty = 1, panel_dirty = 0, seq_dirty = 0;
     eng_init();
+    eng_clock = fm1_ticks;                      /* the load by section */
     seq_init();
     scale_load();
-    demo();
     lcd_fill(0, 0, 240, 240, C_BLACK);
 
     for (;;) {
@@ -370,6 +346,15 @@ static void app_main(void)
         prev = keys;
         for (k = 0; k < 27u; k++) {
             int32_t w = key_white(k), bk;
+            if (sq_open && w >= 0) {                /* the sequencer: the white keys are the steps */
+                if (down >> k & 1u) { sq_key((uint32_t)w, 1); seq_dirty = 1; }
+                if (up >> k & 1u) { sq_key((uint32_t)w, 0); seq_dirty = 1; }
+                continue;
+            }
+            if (sq_open && (down >> k & 1u) && (bk = key_black(k)) >= 0 && bk < 4 && sq_drum()) {   /* which drum */
+                sq_voice = (uint32_t)bk; seq_dirty = 1;
+                continue;
+            }
             if (down >> k & 1u) {
                 if (w >= 0 && pg >= 0 && PAGES[pg].target == T_DRUM) {   /* the drum page: keys 1..8 play the drums */
                     if (w < 8) { eng_drum_hit((uint32_t)w, 110); if (pg_drum != (uint32_t)w) { pg_drum = (uint32_t)w; panel_dirty = 1; } }
@@ -398,15 +383,32 @@ static void app_main(void)
 
         /* buttons */
         b = fm1_input_edges(&rel);
-        if (b & (1u << BTN_OCT_DOWN)) { win -= (int32_t)n; scale_dirty = 1; }
-        if (b & (1u << BTN_OCT_UP)) { win += (int32_t)n; scale_dirty = 1; }
+        if (sq_open) {                              /* the sequencer: OCT moves through the pages of steps */
+            if (b & (1u << BTN_OCT_DOWN) && sq_page > 0u) { sq_page--; seq_dirty = 1; }
+            if (b & (1u << BTN_OCT_UP) && sq_page < 3u) { sq_page++; seq_dirty = 1; }
+        } else {
+            if (b & (1u << BTN_OCT_DOWN)) { win -= (int32_t)n; scale_dirty = 1; }
+            if (b & (1u << BTN_OCT_UP)) { win += (int32_t)n; scale_dirty = 1; }
+        }
         if (b & (1u << BTN_PLAY)) { if (playing_seq) seq_stop(); else seq_play(); playing_seq = !playing_seq; }
         if (b & (1u << BTN_REC)) { stress = !stress; stress_set(stress); }
-        if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; if (pg >= 0) { pg = -1; wheel_dirty = 1; lcd_fill(0, 26, 240, 120, C_BLACK); } }
-        if (pages_button(b)) panel_dirty = 1;
+        if (b & (1u << BTN_HOME)) {                 /* closes a page; on the wheel, switches the load line */
+            load_peak = 0; shed_count = 0;
+            if (pg >= 0 || sq_open) { pg = -1; sq_open = 0; wheel_dirty = scale_dirty = 1; seq_drawn = ~0u; lcd_fill(0, PANEL_Y, 240, PANEL_H, C_BLACK); }
+            else load_split = !load_split;
+        }
+        if (pages_button(b)) { panel_dirty = 1; sq_open = 0; }
+        if (b & (1u << BTN_SEQ)) {
+            sq_open = !sq_open; sq_held = -1;
+            if (sq_open) { pg = -1; seq_dirty = 1; }
+            else { wheel_dirty = scale_dirty = 1; seq_drawn = ~0u; lcd_fill(0, PANEL_Y, 240, PANEL_H, C_BLACK); }
+        }
 
         /* encoders */
-        if (pg >= 0) {                              /* an edit page: its four parameters */
+        if (sq_open) {                              /* the sequencer: a held step or the track */
+            if (sq_knobs()) seq_dirty = 1;
+            if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) { sq_bank = !sq_bank; seq_dirty = 1; }
+        } else if (pg >= 0) {                       /* an edit page: its four parameters */
             if (pages_knobs()) panel_dirty = 1;
             if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) {
                 pg_bank = (uint32_t)imod((int32_t)pg_bank + e, (int32_t)PAGES[pg].nbanks); panel_dirty = 1;
@@ -417,7 +419,9 @@ static void app_main(void)
             knob(ENC_KNOB3, P_E1_R, 160);
             knob(ENC_KNOB4, P_DRIVE, 160);
         }
-        if (pg >= 0 && PAGES[pg].target != T_FX && (e = fm1_enc_take(ENC_PRESETS)) != 0) {   /* which sound, which drum */
+        if (sq_open && (e = fm1_enc_take(ENC_PRESETS)) != 0) {            /* the sequencer: which track */
+            sq_track = (uint32_t)imod((int32_t)sq_track + e, (int32_t)SEQ_TRACKS); sq_voice = 0; sq_held = -1; seq_dirty = 1;
+        } else if (pg >= 0 && PAGES[pg].target != T_FX && (e = fm1_enc_take(ENC_PRESETS)) != 0) {   /* which sound, which drum */
             if (PAGES[pg].target == T_SYN) pg_part = (uint32_t)imod((int32_t)pg_part + e, (int32_t)ENG_PARTS);
             else { pg_drum = (uint32_t)imod((int32_t)pg_drum + e, (int32_t)ENG_DRUMS); eng_drum_hit(pg_drum, 100); }
             panel_dirty = 1;
@@ -444,7 +448,12 @@ static void app_main(void)
         }
 
         /* LEDs: the white keys that sound, PLAY, REC */
-        for (k = 0; k < 16u; k++) fm1_led_key(KEY_LED(WHITE_KEY[k]), held_deg[imod(win + (int32_t)k, (int32_t)n)] != 0);
+        if (sq_open) {                              /* the steps on; the playhead blinks against them */
+            int32_t ps = seq_track_pos(sq_track);
+            for (k = 0; k < 16u; k++) { int32_t st = (int32_t)(sq_page * 16u + k); fm1_led_key(KEY_LED(WHITE_KEY[k]), step_lit(st) != (st == ps)); }
+        } else
+            for (k = 0; k < 16u; k++) fm1_led_key(KEY_LED(WHITE_KEY[k]), held_deg[imod(win + (int32_t)k, (int32_t)n)] != 0);
+        fm1_led_key(BTN_SEQ, sq_open);
         fm1_led_key(BTN_PLAY, playing_seq);
         fm1_led_key(BTN_REC, stress);
         for (k = 0; k < NPAGES; k++) fm1_led_key(PAGES[k].button, pg == (int32_t)k);
@@ -452,14 +461,17 @@ static void app_main(void)
         /* the screen: only what changed, the numbers ten times a second */
         idle_ok = 1;
         if (fm1_ms - t_hdr > 2000u || !t_hdr) { t_hdr = fm1_ms | 1u; draw_header(); }
-        if (pg >= 0) { if (panel_dirty) { panel_dirty = 0; draw_panel(); } wheel_dirty = 0; }
+        if (sq_open) { if (seq_dirty) { seq_dirty = 0; draw_seqpage(); } else draw_seqcells(); wheel_dirty = 0; }
+        else if (pg >= 0) { if (panel_dirty) { panel_dirty = 0; draw_panel(); } wheel_dirty = 0; }
         else if (wheel_dirty) { wheel_dirty = 0; draw_wheel(); }
-        if (scale_dirty) { scale_dirty = 0; draw_scale(); }
+        if (scale_dirty) { scale_dirty = 0; if (pg < 0 && !sq_open) draw_scale(); }
         if (fm1_ms - t_draw > 100u) {
             uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | (uint32_t)(pg + 1) << 2 | seq_tempo() << 6;
-            uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10 | (shed_count & 0xFFu) << 20;
+            uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10 | (shed_count & 0xFFu) << 20 | (uint32_t)load_split << 31;
+            split_update();
+            if (load_split) ld ^= split_pct[0] << 7 ^ split_pct[1] << 13 ^ split_pct[2] << 17 ^ split_pct[3] << 23;
             t_draw = fm1_ms;
-            if (v != voices_drawn || sq != seq_drawn) { voices_drawn = v; seq_drawn = sq; draw_seq(v); }
+            if (pg < 0 && !sq_open && (v != voices_drawn || sq != seq_drawn)) { voices_drawn = v; seq_drawn = sq; draw_seq(v); }
             if (ld != load_drawn) { load_drawn = ld; draw_load(load_avg, load_peak); }
         }
         idle_ok = 0;

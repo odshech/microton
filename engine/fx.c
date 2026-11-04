@@ -153,6 +153,8 @@ static void fx_init(void)
 }
 
 static inline int32_t iabs(int32_t x) { return x < 0 ? -x : x; }
+static inline int32_t mulz16(int32_t g, int32_t d) { i64 p = (i64)g * d; return (int32_t)(p < 0 ? -((-p) >> 16) : p >> 16); }
+static inline int32_t half0(int32_t x) { return x < 0 ? -((-x) >> 1) : x >> 1; }
 
 /* the delay's rate change: a 55-tap half-band FIR (Kaiser 5.6), flat to 9 kHz, -59 dB from 12.5 kHz. Q16.
  * Half the taps are zero; the rest are symmetric: 14 products per output, each way. */
@@ -214,17 +216,17 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
             int32_t k = fxs.dq + wow;
             fxs.dq += (fxd.dly_q8 - fxs.dq) >> 9;                            /* the time glides */
             s[0] = dl_frac(&dl_l, k) * 2; s[1] = dl_frac(&dl_r, k) * 2;   /* the lines hold half level: 6 dB of room */
-            loud |= (uint32_t)(iabs(s[0]) > 2) | (uint32_t)(iabs(s[1]) > 2);
+            loud |= (uint32_t)(iabs(s[0]) > 32) | (uint32_t)(iabs(s[1]) > 32);   /* -60 dB */
             for (c = 0; c < 2; c++) {                                     /* the loop's filters and drive */
                 int32_t y = s[c];
-                fxs.lp[c] += (int32_t)(((i64)fxd.tone_g * (y - fxs.lp[c])) >> 16);
+                fxs.lp[c] += mulz16(fxd.tone_g, y - fxs.lp[c]);         /* towards zero: no circulating offset */
                 y = fxs.lp[c];
-                fxs.hp[c] += (int32_t)(((i64)fxd.lc_g * (y - fxs.hp[c])) >> 16);
+                fxs.hp[c] += mulz16(fxd.lc_g, y - fxs.hp[c]);
                 y -= fxs.hp[c];
                 f[c] = (int32_t)(((i64)knee((int32_t)(((i64)y * fxd.drive) >> 12)) * fxd.drive_inv) >> 12);   /* no gain */
             }
-            dl_push(&dl_l, (x + (int32_t)(((i64)(((f[1] * ping) >> 15) + ((f[0] * nping) >> 15)) * fb) >> 15)) >> 1);
-            dl_push(&dl_r, (((x * nping) >> 15) + (int32_t)(((i64)(((f[0] * ping) >> 15) + ((f[1] * nping) >> 15)) * fb) >> 15)) >> 1);
+            dl_push(&dl_l, half0(x + (int32_t)(((i64)(((f[1] * ping) >> 15) + ((f[0] * nping) >> 15)) * fb) >> 15)));
+            dl_push(&dl_r, half0(((x * nping) >> 15) + (int32_t)(((i64)(((f[0] * ping) >> 15) + ((f[1] * nping) >> 15)) * fb) >> 15)));
             for (c = 0; c < 2; c++) {                                     /* back to full rate */
                 int32_t y0, y1;
                 hb_up((uint32_t)c, (s[c] * lvl) >> 15, &y0, &y1);
@@ -237,6 +239,7 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
         fxs.dquiet = loud || any ? 0u : fxs.dquiet + ENG_BLOCK / 2u;
     } else fxs.prev[0] = fxs.prev[1] = 0;
 
+    prof(ENG_PROF_DELAY);
     /* the plate */
     for (any = 0, i = 0; i < ENG_BLOCK; i++) any |= (uint32_t)rin[i];
     if (any) fxs.rquiet = 0;
@@ -275,10 +278,11 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
                 - dl_tap(&rv_rd1, 3128) - dl_tap(&rv_ra2, 496) - dl_tap(&rv_rd2, 179);
             out[2 * i] += (int32_t)(((i64)ol * lvl) >> 16);                /* x 0.5: seven taps add up */
             out[2 * i + 1] += (int32_t)(((i64)orr * lvl) >> 16);
-            loud |= (uint32_t)(iabs(ol) > 3) | (uint32_t)(iabs(orr) > 3);
+            loud |= (uint32_t)(iabs(ol) > 48) | (uint32_t)(iabs(orr) > 48);   /* ~-60 dB: below it, only rounding noise */
         }
         fxs.rquiet = loud || any ? 0u : fxs.rquiet + ENG_BLOCK;
     }
+    prof(ENG_PROF_REVERB);
 }
 
 /* ------------------------------------------------------------------ the effects' public calls */

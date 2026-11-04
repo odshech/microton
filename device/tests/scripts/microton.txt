@@ -1,4 +1,4 @@
-# MICROTON: a chord on the white keys, the demo pattern, the 8-voice load test, the next scale
+# MICROTON: a chord on the white keys, the sequencer page with steps, play, the 8-voice load test
 200 keys 0x1
 500 keys 0x91
 1100 shot

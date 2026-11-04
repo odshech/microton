@@ -324,6 +324,7 @@ typedef struct {
     int32_t amp, amp_step, gl, gr;
     int32_t drift, vcut, vtime, rand_note;
     int32_t uni_c16, uni_pan;
+    int32_t fast;                           /* dropped for load: a quick fade, not a cut */
     int32_t m_wave[2], m_pw[2], m_lvl2, m_noise, m_drive;
 } voice_t;
 
@@ -404,7 +405,7 @@ static void voice_start(voice_t *v, uint32_t part, int32_t note, int32_t vel, in
     int was_idle = v->env[0].stage == ST_IDLE || v->part != (int32_t)part;
     if (v->part != (int32_t)part) { for (k = 0; k < 3; k++) { v->env[k].stage = ST_IDLE; v->env[k].level = 0; } }
     v->part = (int32_t)part;
-    v->note = note; v->vel = vel; v->gate = 1; v->age = ++age_clock; v->fine = fine;
+    v->note = note; v->vel = vel; v->gate = 1; v->age = ++age_clock; v->fine = fine; v->fast = 0;
     if (retrig || was_idle) {
         for (k = 0; k < 3; k++) env_gate(&v->env[k], 1);
         v->lfade[0] = v->lfade[1] = 0;
@@ -509,6 +510,10 @@ static void voice_tick(voice_t *v, const scale_t *sc, uint32_t vi)
     uint32_t j;
     tm = 32768 + (((v->vtime * X->variance) >> 15) / 5);                  /* ±20 % envelope times */
     for (j = 0; j < 3; j++) env_tick(&v->env[j], &X->env[j], tm);
+    if (v->fast) {                                                       /* dropped for load: out in ~8 ms */
+        v->env[0].level -= (int32_t)(((i64)v->env[0].level * lerp_tab(TIME_COEF_Q30, 3436u)) >> 30);
+        if (v->env[0].level < (ONE_Q30 >> 14)) { v->env[0].level = 0; v->env[0].stage = ST_IDLE; v->fast = 0; }
+    }
     for (j = 0; j < 8; j++)
         if (X->mod[j].src && X->mod[j].dst) md[X->mod[j].dst] += (mod_src(v, X->mod[j].src) * X->mod[j].amt) >> 15;
 
@@ -684,6 +689,12 @@ static void voice_run(voice_t *v, int32_t *bus)
     }
 }
 
+/* the load, by section (the FM-1 sets eng_clock to its 24 MHz counter): ticks since the last read */
+uint32_t (*eng_clock)(void);
+uint32_t eng_prof[ENG_PROF_N];
+static uint32_t prof_t;
+static inline void prof(uint32_t seg) { if (eng_clock) { uint32_t t = eng_clock(); eng_prof[seg] += t - prof_t; prof_t = t; } }
+
 /* ------------------------------------------------------------------ drums and effects */
 #include "drums.c"
 #include "fx.c"
@@ -783,13 +794,13 @@ int eng_rt_shed(void)
     int32_t bs = 0x7FFFFFFF, score;
     for (i = 0; i < ENG_VOICES; i++) {
         voice_t *v = &V[i];
-        if (v->env[0].stage == ST_IDLE) continue;
+        if (v->env[0].stage == ST_IDLE || v->fast) continue;
         score = v->gate ? v->age : (v->env[0].level >> 2) - 0x40000000;
         if (score < bs) { bs = score; best = i; }
     }
     if (best == ENG_VOICES) return 0;
-    for (i = 0; i < 3u; i++) { V[best].env[i].stage = ST_IDLE; V[best].env[i].level = 0; }
-    V[best].gate = 0;
+    for (i = 0; i < 3u; i++) env_gate(&V[best].env[i], 0);
+    V[best].gate = 0; V[best].fast = 1;                                 /* a quick fade: no click */
     return 1;
 }
 
@@ -826,6 +837,7 @@ void eng_render(int32_t *out, uint32_t n)
     }
     eng_rt_commit();
 
+    if (eng_clock) prof_t = eng_clock();
     for (b = 0; b + ENG_BLOCK <= n; b += ENG_BLOCK) {
         if (eng_rt_hook) { eng_rt_hook(ENG_BLOCK); eng_rt_commit(); }   /* the sequencer, block by block */
         live = 0;                                                        /* the parts with a voice this block */
@@ -860,7 +872,9 @@ void eng_render(int32_t *out, uint32_t n)
             if (ds) for (i = 0; i < ENG_BLOCK; i++) sdly[i] += (int32_t)(((i64)((bp[2 * i] + bp[2 * i + 1]) >> 1) * ds) >> 15);
         }
         drums_commit();
+        prof(ENG_PROF_SYNTH);
         drums_run(mix, srev, sdly);
+        prof(ENG_PROF_DRUMS);
         fx_run(mix, srev, sdly);
         for (i = 0; i < ENG_BLOCK; i++) {
             uint32_t c;

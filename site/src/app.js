@@ -304,7 +304,7 @@
     noise: ['Noise', PCT], noise_dec: ['Noise decay', T],
     noise_cut: ['Filter cutoff', r => HZC(4335 + r * 8795 / 16383)],
     noise_mode: ['Filter type', ['low-pass', 'band-pass', 'high-pass']], noise_reso: ['Resonance', PCT],
-    metal: ['Metal', PCT], tone: ['Tone level', PCT],
+    metal: ['Metal', PCT], tone: ['Tone level', PCT], hold: ['Hold', r => r ? `${Math.round(r * 200 / 16383)} ms` : 'off'],
     clap: ['Clap bursts', ['none', '1', '2', '3']],
     drive: ['Drive', OFF_OR(r => `×${(1 + 7 * r / 16383).toFixed(2)}`)], level: ['Level', PCT], pan: ['Pan', PANF],
     rev: ['Reverb send', PCT], dly: ['Delay send', PCT], choke: ['Choke group', ['none', 'group 1', 'group 2']],
@@ -318,7 +318,7 @@
     dly_lowcut: ['Low cut', r => HZC(2400 + r * 6000 / 16383)], dly_ping: ['Ping-pong', PCT], dly_wow: ['Tape wow', PCT],
     dly_drive: ['Saturation', r => `×${(1 + 3 * r / 16383).toFixed(2)}`], dly_level: ['Level', PCT], dly_to_rev: ['Into the reverb', PCT],
   };
-  const DRUM_GROUPS = [['Tone', ['tune', 'pitch_amt', 'pitch_dec', 'decay', 'tone']], ['FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
+  const DRUM_GROUPS = [['Tone', ['tune', 'pitch_amt', 'pitch_dec', 'hold', 'decay', 'tone']], ['FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
     ['Noise and metal', ['noise', 'metal', 'noise_mode', 'noise_cut', 'noise_reso', 'noise_dec', 'clap']], ['Output', ['drive', 'level', 'pan', 'rev', 'dly', 'choke']]];
   const FX_GROUPS = [['Reverb', ['rev_size', 'rev_pre', 'rev_damp', 'rev_bw', 'rev_mod', 'rev_level']],
     ['Delay', ['dly_sync', 'dly_time', 'dly_fb', 'dly_tone', 'dly_lowcut', 'dly_ping', 'dly_wow', 'dly_drive', 'dly_level', 'dly_to_rev']]];

@@ -56,7 +56,11 @@ int eng_set_scale_c16(uint32_t n, const int32_t *c16);
 int eng_scale_from_lib(const uint8_t *lib, uint32_t len, uint32_t index);
 uint32_t eng_scale_degrees(void);
 uint32_t eng_voices_active(void);
-int eng_rt_shed(void);                        /* audio context: drop one voice (overload); 1 = done */
+int eng_rt_shed(void);
+/* the load by section: set eng_clock (any free-running counter) and read eng_prof, ticks; zero it after reading */
+enum { ENG_PROF_SYNTH, ENG_PROF_DRUMS, ENG_PROF_DELAY, ENG_PROF_REVERB, ENG_PROF_N };
+extern uint32_t (*eng_clock)(void);
+extern uint32_t eng_prof[ENG_PROF_N];                        /* audio context: drop one voice (overload); 1 = done */
 
 /* ---- drums: eight FM drums (drums.c); parameters apply at the next block */
 #define ENG_DRUMS 8u

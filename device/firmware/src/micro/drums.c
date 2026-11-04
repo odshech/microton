@@ -20,15 +20,15 @@ static const uint16_t DP_MAX[DP_COUNT] = {
 
 /* the kit: kick, snare, closed hat, open hat, clap, low tom, high tom, rim */
 static const uint16_t DKIT[ENG_DRUMS][DP_COUNT] = {
-/*  tune  p.amt p.dec ratio fm   fm.dec fb    noise n.cut n.dec decay clap drive level pan   rev   dly  choke n.mode n.reso metal tone */
-  { 2600, 9000, 3800, 1,    800, 2800, 0,    1500, 3556, 1200, 9200, 0,   6000, 10500, 8192, 0,    0,    0,    0,    0,    0,     16383 },
-  { 6600, 2400, 2600, 2,   2500, 3200, 0,    9000, 9673, 6600, 6800, 0,   3000, 11000, 8192, 2600, 0,    0,    2,    2500, 0,     16383 },
-  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13713, 5800, 2000, 0,  0,    14500, 9600, 1200, 0,    1,    2,    4000, 16383, 0 },
-  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13300, 9600, 2000, 0,  0,    13000, 9600, 2400, 2000, 1,    2,    4000, 16383, 0 },
-  { 7000, 0,    2000, 1,      0, 2000, 0,   16383, 8746, 7000, 1200, 3,   2000, 13500, 7400, 4200, 0,    0,    1,    7000, 0,     0 },
-  { 4700, 3000, 4600, 1,   1200, 3600, 0,    1500, 5791, 2200, 8600, 0,   2500, 10000, 6200, 2000, 0,    0,    0,    0,    0,     16383 },
-  { 5800, 3000, 4400, 1,   1200, 3600, 0,    1500, 5791, 2200, 8200, 0,   2500, 9500,  10200, 2000, 0,   0,    0,    0,    0,     16383 },
-  { 9000, 1500, 1800, 6,   4200, 2600, 2500, 3000, 12627, 3000, 4400, 0,  4000, 11000, 8192, 1800, 0,    0,    1,    5000, 3000,  12000 },
+/*  tune  p.amt p.dec ratio fm   fm.dec fb    noise n.cut n.dec decay clap drive level pan   rev   dly  choke n.mode n.reso metal tone  hold */
+  { 2600, 9000, 3800, 1,    800, 2800, 0,    1500, 3556, 1200, 9200, 0,   6000, 10500, 8192, 0,    0,    0,    0,    0,    0,     16383,  2200 },
+  { 6600, 2400, 2600, 2,   2500, 3200, 0,    9000, 9673, 6600, 6800, 0,   3000, 11000, 8192, 2600, 0,    0,    2,    2500, 0,     16383,   700 },
+  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13713, 5800, 2000, 0,  0,    14500, 9600, 1200, 0,    1,    2,    4000, 16383, 0,     0 },
+  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13300, 9600, 2000, 0,  0,    13000, 9600, 2400, 2000, 1,    2,    4000, 16383, 0,     0 },
+  { 7000, 0,    2000, 1,      0, 2000, 0,   16383, 8746, 7000, 1200, 3,   2000, 13500, 7400, 4200, 0,    0,    1,    7000, 0,     0,     0 },
+  { 4700, 3000, 4600, 1,   1200, 3600, 0,    1500, 5791, 2200, 8600, 0,   2500, 10000, 6200, 2000, 0,    0,    0,    0,    0,     16383,  1400 },
+  { 5800, 3000, 4400, 1,   1200, 3600, 0,    1500, 5791, 2200, 8200, 0,   2500, 9500,  10200, 2000, 0,   0,    0,    0,    0,     16383,  1400 },
+  { 9000, 1500, 1800, 6,   4200, 2600, 2500, 3000, 12627, 3000, 4400, 0,  4000, 11000, 8192, 1800, 0,    0,    1,    5000, 3000,  12000,     0 },
 };
 /* the TR-808's six cymbal oscillators, as ratios to the lowest (205.3, 304.4, 369.6, 522.7, 540, 800 Hz), Q16 */
 static const uint32_t METAL_Q16[6] = {65536, 97170, 117983, 166863, 172381, 255380};
@@ -41,7 +41,7 @@ typedef struct {
     uint32_t ratio;                         /* Q8 */
     int32_t fm, fb, noise, metal, tone;     /* index Q15, feedback Q15, levels Q15 */
     int32_t a1, a2, a3, k, mode;            /* the noise filter: ZDF state-variable, Q15 (k: Q16) */
-    uint32_t clap;
+    uint32_t clap, hold;                    /* clap bursts; the amplitude's hold, in control ticks */
     int32_t drive, level, gl, gr, rev, dly, choke;
 } dderived_t;
 typedef struct {
@@ -49,7 +49,9 @@ typedef struct {
     int32_t m1, m2;                         /* the modulator's last two outputs (feedback) */
     int32_t aenv, penv, fenv, nenv;         /* Q30 */
     int32_t a, n;                           /* amplitudes now, Q15 (ramped) */
-    int32_t vel, ic1, ic2, bursts, btimer, on;
+    int32_t vel, ic1, ic2, bursts, btimer, on, hold;
+    uint32_t cinc, minc;                    /* the pitch now: swept sample by sample between control ticks */
+    int32_t idx;                            /* the FM index now, likewise */
     uint32_t mp[6];                         /* the metal's phases */
 } dvoice_t;
 
@@ -102,6 +104,7 @@ static void drum_derive(uint32_t d)
         X->mode = R[DP_NOISE_MODE] > 2u ? 2 : (int32_t)R[DP_NOISE_MODE];
     }
     X->clap = R[DP_CLAP] > 3u ? 3u : R[DP_CLAP];
+    X->hold = (R[DP_HOLD] * 551u) / 16383u;                                    /* 0 .. 200 ms */
     X->drive = R[DP_DRIVE] ? 4096 + (int32_t)((R[DP_DRIVE] * 28672u) / 16383u) : 0;    /* x1 .. x8 */
     X->level = q15(R[DP_LEVEL]);
     {
@@ -148,6 +151,10 @@ static void drum_hit(uint32_t d, int32_t vel)
     v->aenv = v->penv = v->fenv = v->nenv = ONE_Q30;
     v->vel = vel < 1 ? 1 : vel > 127 ? 127 : vel;
     v->bursts = (int32_t)DD[d].clap; v->btimer = CLAP_BLOCKS;
+    v->hold = (int32_t)DD[d].hold;
+    v->cinc = drum_inc(DD[d].base_c16 + DD[d].pamt_c16);                       /* the sweep's top: no step at the start */
+    v->minc = (uint32_t)(((u64)v->cinc * DD[d].ratio) >> 8);
+    v->idx = DD[d].fm >> 1;
     if (!v->on) { v->a = v->n = 0; v->ic1 = v->ic2 = 0; for (i = 0; i < 6u; i++) v->mp[i] = eng_rnd(); }
     v->on = 1;
 }
@@ -163,34 +170,41 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
         const dderived_t *X = &DD[d];
         int32_t velq, at, nt, as, ns, idx, a, n, ic1, ic2, m1, m2, fbk, gl, gr, rv, dl, drv, nl, ml;
         uint32_t cinc, minc, cph, mph, minc6[6], j;
+        int32_t dc, dm, di, lv;
         if (!v->on) continue;
         /* the control tick */
-        v->aenv = edecay(v->aenv, X->adec);
+        if (v->hold > 0) v->hold--; else v->aenv = edecay(v->aenv, X->adec);
         v->nenv = edecay(v->nenv, X->ndec);
         v->penv = edecay(v->penv, X->pdec);
         v->fenv = edecay(v->fenv, X->fdec);
         if (v->bursts > 0 && --v->btimer == 0) { v->nenv = ONE_Q30; v->bursts--; v->btimer = CLAP_BLOCKS; }
         velq = 8192 + ((v->vel * 24576) / 127);
-        at = (int32_t)(((((i64)(v->aenv >> 15) * velq) >> 15) * X->tone) >> 15);
-        nt = (X->noise || X->metal) ? (int32_t)(((i64)(v->nenv >> 15) * velq) >> 15) : 0;
+        at = (int32_t)(((i64)(v->aenv >> 15) * X->tone) >> 15);
+        nt = (X->noise || X->metal) ? v->nenv >> 15 : 0;
         if (at < 4 && nt < 4 && v->bursts == 0 && v->a < 4 && v->n < 4) { v->on = 0; continue; }
         cinc = drum_inc(X->base_c16 + (int32_t)(((i64)X->pamt_c16 * (v->penv >> 15)) >> 15));
         minc = (uint32_t)(((u64)cinc * X->ratio) >> 8);
         idx = (int32_t)(((i64)X->fm * (v->fenv >> 15)) >> 15) >> 1;   /* Q14: up to 4 pi */
+        dc = ((int32_t)cinc - (int32_t)v->cinc) / (int32_t)ENG_BLOCK;   /* this tick's pitch and index, reached */
+        dm = ((int32_t)minc - (int32_t)v->minc) / (int32_t)ENG_BLOCK;   /* sample by sample: a smooth sweep */
+        di = (idx - v->idx) / (int32_t)ENG_BLOCK;
+        cinc = v->cinc; minc = v->minc; idx = v->idx;
         as = (at - v->a) / (int32_t)ENG_BLOCK;
         ns = (nt - v->n) / (int32_t)ENG_BLOCK;
         a = v->a; n = v->n; ic1 = v->ic1; ic2 = v->ic2; m1 = v->m1; m2 = v->m2; cph = v->cph; mph = v->mph;
         nl = X->noise; ml = X->metal;
         if (ml) { uint32_t b0 = drum_inc(X->base_c16); for (j = 0; j < 6u; j++) minc6[j] = (uint32_t)(((u64)b0 * METAL_Q16[j]) >> 16); }
         fbk = X->fb >> 1; gl = X->gl; gr = X->gr; drv = X->drive;
-        rv = (int32_t)(((i64)X->rev * X->level) >> 15);
-        dl = (int32_t)(((i64)X->dly * X->level) >> 15);
+        lv = (int32_t)(((i64)X->level * velq) >> 15);                  /* velocity after the drive: clear dynamics */
+        rv = (int32_t)(((i64)X->rev * lv) >> 15);
+        dl = (int32_t)(((i64)X->dly * lv) >> 15);
         for (i = 0; i < ENG_BLOCK; i++) {
             int32_t m, c, s, nz;
             m = sine(mph + ((uint32_t)(((m1 + m2) >> 1) * fbk) << 3));     /* feedback: up to 2 pi */
             m2 = m1; m1 = m;
             c = sine(cph + ((uint32_t)(m * idx) << 4));
             mph += minc; cph += cinc;
+            cinc += (uint32_t)dc; minc += (uint32_t)dm; idx += di;
             s = (c * a) >> 15;
             if (n) {
                 int32_t v1, v2, v3, y;
@@ -210,14 +224,15 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
                 s += (y * n) >> 15;
             }
             if (drv) s = sat((int32_t)(((i64)s * drv) >> 12));
-            s = (int32_t)(((i64)s * X->level) >> 15);
+            s = (int32_t)(((i64)s * lv) >> 15);
             out[2 * i] += (s * gl) >> 15;
             out[2 * i + 1] += (s * gr) >> 15;
             rev[i] += (int32_t)(((i64)s * rv) >> 15);
             dly[i] += (int32_t)(((i64)s * dl) >> 15);
             a += as; n += ns;
         }
-        v->a = at; v->n = nt; v->ic1 = ic1; v->ic2 = ic2; v->m1 = m1; v->m2 = m2; v->cph = cph; v->mph = mph;
+        v->a = at; v->n = nt; v->ic1 = ic1; v->ic2 = ic2; v->m1 = m1;
+        v->cinc = cinc; v->minc = minc; v->idx = idx; v->m2 = m2; v->cph = cph; v->mph = mph;
     }
 }
 

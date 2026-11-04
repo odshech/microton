@@ -22,3 +22,4 @@ D(NOISE_MODE, "noise_mode",     2, E)   /* the noise filter: low-pass, band-pass
 D(NOISE_RESO, "noise_reso", 16383, C)
 D(METAL,      "metal",      16383, C)   /* six square waves at the 808's ratios, from the tune: into the noise filter */
 D(TONE,       "tone",       16383, C)   /* the FM voice's level */
+D(HOLD,       "hold",       16383, C)   /* the tone holds full before it decays: 0 .. 200 ms (punch) */
