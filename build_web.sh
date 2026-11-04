@@ -27,6 +27,8 @@ clang $CFLAGS \
   -Wl,--export=tun_degrees -Wl,--export=tun_mode -Wl,--export=tun_c16 -Wl,--export=tun_base_c16 -Wl,--export=tun_fine_of \
   -Wl,--export=tun_ref_degree -Wl,--export=tun_ref_chz \
   -Wl,--export=eng_part_off -Wl,--export=w_init -Wl,--export=w_midi -Wl,--export=seq_play -Wl,--export=seq_stop -Wl,--export=seq_continue -Wl,--export=seq_playing -Wl,--export=seq_set_tempo -Wl,--export=seq_tempo -Wl,--export=seq_queue_pattern -Wl,--export=seq_pattern_playing -Wl,--export=seq_pattern_queued -Wl,--export=seq_song_mode -Wl,--export=seq_song_on -Wl,--export=seq_song_set -Wl,--export=seq_song_get -Wl,--export=seq_song_length -Wl,--export=seq_song_len -Wl,--export=seq_song_row -Wl,--export=seq_track_pos -Wl,--export=seq_scale_request -Wl,--export=seq_step_get -Wl,--export=seq_step_set -Wl,--export=seq_track_get -Wl,--export=seq_track_set -Wl,--export=seq_pattern_get -Wl,--export=seq_pattern_set -Wl,--export=seq_step_lock -Wl,--export=seq_step_unlock -Wl,--export=seq_op -Wl,--export=seq_project_bytes -Wl,--export=seq_project_size -Wl,--export=eng_param_max \
+  -Wl,--export=eng_drum_hit -Wl,--export=eng_drum_set -Wl,--export=eng_drum_get -Wl,--export=eng_drum_param_max -Wl,--export=eng_drum_param_def \
+  -Wl,--export=eng_fx_set -Wl,--export=eng_fx_get -Wl,--export=eng_fx_param_max -Wl,--export=eng_fx_param_def -Wl,--export=eng_fx_tempo -Wl,--export=eng_set_rate \
   -o site/engine.wasm $SRC
 python3 tools/gen_params_js.py
 python3 tools/build_site.py

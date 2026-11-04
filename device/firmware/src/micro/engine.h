@@ -57,3 +57,32 @@ int eng_scale_from_lib(const uint8_t *lib, uint32_t len, uint32_t index);
 uint32_t eng_scale_degrees(void);
 uint32_t eng_voices_active(void);
 int eng_rt_shed(void);                        /* audio context: drop one voice (overload); 1 = done */
+
+/* ---- drums: eight FM drums (drums.c); parameters apply at the next block */
+#define ENG_DRUMS 8u
+enum {
+#define D(id, key, max, kind) DP_##id,
+#include "drums.def"
+#undef D
+    DP_COUNT
+};
+void eng_drum_hit(uint32_t drum, uint32_t velocity);                    /* queued, like a note */
+void eng_drum_set(uint32_t drum, uint32_t id, uint32_t raw);
+uint32_t eng_drum_get(uint32_t drum, uint32_t id);
+uint32_t eng_drum_param_max(uint32_t id);
+uint32_t eng_drum_param_def(uint32_t drum, uint32_t id);               /* the built-in kit */
+void eng_rt_drum(uint32_t drum, int32_t velocity);                      /* audio context (the sequencer) */
+void eng_set_rate(uint32_t hz);                                         /* the real output rate (browser) */
+
+/* ---- effects: reverb and delay (fx.c), one of each, fed by sends */
+enum {
+#define F(id, key, def, max, kind) FX_##id,
+#include "fx.def"
+#undef F
+    FX_COUNT
+};
+void eng_fx_set(uint32_t id, uint32_t raw);
+uint32_t eng_fx_get(uint32_t id);
+uint32_t eng_fx_param_max(uint32_t id);
+uint32_t eng_fx_param_def(uint32_t id);
+void eng_fx_tempo(uint32_t bpm_x100);                                   /* for the synced delay times */

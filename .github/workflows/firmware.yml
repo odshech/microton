@@ -22,6 +22,7 @@ jobs:
         run: |
           cc -O2 -std=gnu99 -Iengine tests/test_engine.c engine/engine.c engine/tuning.c -lm -o /tmp/test_engine && /tmp/test_engine
           cc -O2 -std=gnu99 -Iengine tests/test_seq.c engine/engine.c engine/tuning.c engine/seq.c -lm -o /tmp/test_seq && /tmp/test_seq
+          cc -O2 -std=gnu99 -Iengine tests/test_fx.c engine/engine.c -lm -o /tmp/test_fx && /tmp/test_fx
           sh sync_device.sh
 
       - name: JieLi toolchain (pkgman.jieliapp.com)

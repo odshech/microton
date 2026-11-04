@@ -115,7 +115,8 @@ static void note(uint32_t t, uint32_t on, int32_t deg, int32_t vel, int32_t fine
         if (on) eng_rt_on(t, deg, vel, fine); else eng_rt_off(t, deg);
     } else if (t == TR_EXT) {
         midi_out((uint8_t)((on ? 0x90 : 0x80) | ((chan - 1u) & 15u)), (uint8_t)midi_note(deg), on ? (uint8_t)vel : 0);
-    } else {                                                             /* drums, until the drum engine: MIDI */
+    } else {                                                             /* drums: the engine's, and MIDI too */
+        if (on && deg >= 0 && deg < (int32_t)ENG_DRUMS) eng_rt_drum((uint32_t)deg, vel);
         midi_out((uint8_t)((on ? 0x90 : 0x80) | ((chan - 1u) & 15u)), (uint8_t)(36 + deg), on ? (uint8_t)vel : 0);
     }
 }
@@ -351,6 +352,7 @@ void seq_set_tempo(uint32_t bpm)
     if (bpm > 30000u) bpm = 30000u;
     PJ.tempo = (uint16_t)bpm;
     RT.inc = (uint32_t)(((u64)bpm * 265944u) >> 8);                     /* Q32 x1 steps per block of 16 frames */
+    eng_fx_tempo(bpm);                                                   /* the synced delay */
 }
 uint32_t seq_tempo(void) { return PJ.tempo; }
 void seq_queue_pattern(uint32_t p)

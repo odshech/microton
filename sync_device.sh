@@ -3,5 +3,5 @@
 set -e
 cd "$(dirname "$0")"
 python3 tools/gen_tables.py
-for f in engine.c engine.h tuning.c tuning.h seq.c seq.h params.def tables.h; do cp engine/$f device/firmware/src/micro/$f; done
+for f in engine.c engine.h tuning.c tuning.h seq.c seq.h params.def tables.h drums.c drums.def fx.c fx.def; do cp engine/$f device/firmware/src/micro/$f; done
 echo "engine copied into device/firmware/src/micro"

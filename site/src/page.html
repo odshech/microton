@@ -104,6 +104,11 @@ button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(
 .tabs button { border-color: transparent; background: none; }
 .tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 600; }
 .group { display: grid; gap: 4px; }
+.pads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.pads button { min-height: 52px; font-size: 14px; }
+.pads button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.pads button.hit { background: var(--accent); color: var(--panel); }
+.pads[hidden] { display: none; }
 .ctl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) 6.5em; gap: 10px; align-items: center; min-height: 34px; }
 @media (max-width: 480px) { .ctl { grid-template-columns: 7.5em minmax(0, 1fr) 5.5em; gap: 6px; } }
 .ctl label { font-size: 14px; }
@@ -264,6 +269,16 @@ td.moved { color: var(--brass); }
       <div class="tabs" role="tablist" id="tabs"></div>
       <div id="tabBody"></div>
       <p class="note">לחיצה כפולה על מחוון מחזירה אותו לברירת המחדל. כל פרמטר מקבל גם הודעת מידי לפי המספר שלו ברשימה.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-kit">
+      <div class="bar" style="justify-content: space-between">
+        <h2 id="h-kit">תופים ואפקטים</h2>
+        <div class="tabs" role="tablist" id="kitTabs" style="border: 0; padding: 0"></div>
+        <button id="kitResetBtn" type="button">ברירת מחדל</button>
+      </div>
+      <div class="pads" id="pads" role="group" aria-label="שמונת התופים: לחיצה מנגנת ובוחרת לעריכה"></div>
+      <div id="kitBody"></div>
     </section>
   </div>
 

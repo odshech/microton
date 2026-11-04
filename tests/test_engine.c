@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+/* the dry synth: the effects off (they colour the measurements) */
+static void eng_init_dry(void) { eng_init(); eng_fx_set(FX_REV_LEVEL, 0); eng_fx_set(FX_DLY_LEVEL, 0); }
 
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -43,7 +45,7 @@ static void lock_hook(uint32_t frames)
 }
 static void pure_sine_patch(void)
 {
-    eng_init();
+    eng_init_dry();
     eng_set_param(0, P_O1_WAVE, 0); eng_set_param(0, P_O2_LEVEL, 0); eng_set_param(0, P_DRIVE, 0);
     eng_set_param(0, P_CUTOFF, 16383); eng_set_param(0, P_RESO, 0); eng_set_param(0, P_FLT_KEYTRK, 0);
     eng_set_param(0, P_FLT_ENV, 8192); eng_set_param(0, P_E1_A, 0); eng_set_param(0, P_E1_S, 16383);
@@ -107,7 +109,7 @@ int main(int argc, char **argv)
     CHECK(fabs(freq_of(x, 44032) - 440.0) < 0.05, "ref 440: %.3f", freq_of(x, 44032));
 
     /* 4. voices: 9 notes on 8 voices, then release to silence */
-    eng_init();
+    eng_init_dry();
     for (int i = 0; i < 9; i++) eng_note_on(0, i * 2, 100);
     render(NULL, 4096);
     CHECK(eng_voices_active() == 8, "voices active %u", eng_voices_active());
@@ -118,7 +120,7 @@ int main(int argc, char **argv)
     { int quiet = 1; for (int i = 0; i < 2 * N; i++) if (buf[i]) quiet = 0; CHECK(quiet, "silence after release"); }
 
     /* 5. level: 8 loud voices, full resonance and drive, must not wrap */
-    eng_init();
+    eng_init_dry();
     eng_set_param(0, P_RESO, 16383); eng_set_param(0, P_DRIVE, 16383); eng_set_param(0, P_SUB_LEVEL, 16383);
     eng_set_param(0, P_NOISE_LEVEL, 16383); eng_set_param(0, P_RING_LEVEL, 16383); eng_set_param(0, P_O2_LEVEL, 16383);
     eng_set_param(0, P_VOLUME, 16383);
@@ -136,7 +138,7 @@ int main(int argc, char **argv)
         CHECK(peak < 120000, "peak %d", peak);
     }
     for (int m = 0; m < 4; m++) {                                    /* every filter mode, every unison size */
-        eng_init(); eng_set_param(0, P_FLT_MODE, (uint32_t)m); eng_set_param(0, P_VOICE_MODE, 2); eng_set_param(0, P_UNI_VOICES, 2);
+        eng_init_dry(); eng_set_param(0, P_FLT_MODE, (uint32_t)m); eng_set_param(0, P_VOICE_MODE, 2); eng_set_param(0, P_UNI_VOICES, 2);
         eng_note_on(0, 0, 127); render(NULL, 8192);
         CHECK(eng_voices_active() == 4, "unison 4 in mode %d: %u", m, eng_voices_active());
     }
@@ -237,7 +239,7 @@ int main(int argc, char **argv)
 
     /* 9. speed on this computer, 8 voices of the heaviest patch (a relative number, not the FM-1's) */
     {
-        eng_init(); eng_set_param(0, P_SUB_LEVEL, 9000); eng_set_param(0, P_NOISE_LEVEL, 2000);
+        eng_init_dry(); eng_set_param(0, P_SUB_LEVEL, 9000); eng_set_param(0, P_NOISE_LEVEL, 2000);
         eng_set_param(0, P_O1_WAVE, 14000); eng_set_param(0, P_O2_WAVE, 6000);
         for (int i = 0; i < 8; i++) eng_note_on(0, i * 2, 100);
         clock_t t0 = clock();

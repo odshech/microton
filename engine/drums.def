@@ -1,0 +1,20 @@
+/* The drum parameters, once. D(id, key, max, kind): kind C continuous 0..16383, B bipolar (8192 = centre),
+ * E a choice 0..max. The kit's values are in drums.c (DKIT). Order = the NRPN numbers above the synth's: append only. */
+D(TUNE,       "tune",       16383, C)   /* 20 Hz .. 5 kHz */
+D(PITCH_AMT,  "pitch_amt",  16383, C)   /* the pitch sweep: 0 .. 4 octaves above the tune, falling */
+D(PITCH_DEC,  "pitch_dec",  16383, C)
+D(RATIO,      "ratio",         15, E)   /* the modulator: 0.5 1 1.5 2 2.5 3 4 5 6 7 1.41 2.76 3.14 5.19 7.13 14 */
+D(FM,         "fm",         16383, C)   /* the index: 0 .. 4 pi */
+D(FM_DEC,     "fm_dec",     16383, C)
+D(FEEDBACK,   "feedback",   16383, C)   /* the modulator on itself: towards noise */
+D(NOISE,      "noise",      16383, C)
+D(NOISE_TONE, "noise_tone", 16383, B)   /* low-pass ← flat → high-pass */
+D(NOISE_DEC,  "noise_dec",  16383, C)
+D(DECAY,      "decay",      16383, C)   /* the tone's decay */
+D(CLAP,       "clap",           3, E)   /* extra noise bursts, ~9 ms apart */
+D(DRIVE,      "drive",      16383, C)
+D(LEVEL,      "level",      16383, C)
+D(PAN,        "pan",        16383, B)
+D(REV,        "rev",        16383, C)   /* send to the reverb */
+D(DLY,        "dly",        16383, C)   /* send to the delay */
+D(CHOKE,      "choke",          2, E)   /* group: drums of the same group cut each other */

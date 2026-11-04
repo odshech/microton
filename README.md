@@ -11,7 +11,11 @@ browser now and for the FM-1 later.
 
 Build: `sh build_web.sh` (clang with the wasm32 target, wasm-ld, python3). Tests:
 `cc -O2 -Iengine tests/test_engine.c engine/engine.c -lm && ./a.out`, `python3 tests/alias_check.py <render_raw>`,
-`node tests/ui_smoke.js` (and `WORKLET=1 node tests/ui_smoke.js`), `cc -O2 -Iengine tests/test_seq.c engine/*.c -lm`.
+`node tests/ui_smoke.js` (and `WORKLET=1 node tests/ui_smoke.js`), `cc -O2 -Iengine tests/test_seq.c engine/engine.c engine/tuning.c engine/seq.c -lm`,
+`cc -O2 -Iengine tests/test_fx.c engine/engine.c -lm`.
+
+`engine/drums.c` (eight FM drums, `drums.def`) and `engine/fx.c` (Dattorro plate reverb, half-rate stereo delay, `fx.def`)
+are included by `engine.c`.
 
 The engine has three parts (sounds), one per melodic track; `engine/seq.c` is the sequencer, run from inside the audio render.
 

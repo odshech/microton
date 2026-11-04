@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* MICROTON 0.2 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
+/* MICROTON 0.3 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
  * A test firmware: it plays, and it measures. The screen shows the battery and the audio engine's CPU load.
  *
  *   white keys     the 16 degrees of the window; 3 sounds share 8 voices (part 1 on the keys)
  *   black keys     1 window -  2 window +  3 period -  4 period +  5 hold  7 mode -  8 mode +
  *                  9 scale -  10 scale +  11 all notes off          (left to right; 6 is free)
  *   OCT- OCT+      period - / +
- *   PLAY           the sequencer: the demo pattern, three parts
+ *   PLAY           the sequencer: the demo pattern, three parts and the drums
  *   REC            the load test: 8 voices of the heaviest sound, held
  *   HOME           clears the peak load and the count of voices dropped for load (CUT n)
  *   KNOB 1..4      cutoff, resonance, envelope 1 release, drive (part 1)
+ *   FX             the knobs switch to: reverb level, reverb size, delay level, delay feedback (FX lit)
  *   PRESETS        the scale          SELECT  the tempo
  *   MIDI in        notes on the white-key map (C4 = the window's first degree), bend, mod wheel, NRPN = parameters
  *
@@ -57,7 +58,7 @@ static void app_audio(int32_t *out, uint32_t n)
 /* ---- state (main loop) */
 static uint32_t scale_i = 3;                    /* in LIB_ORDER: 22-EDO */
 static int32_t win = 0;                         /* the first degree on the white keys */
-static int hold, stress, playing_seq;
+static int hold, stress, playing_seq, fx_page;
 static int32_t key_deg[27];                     /* the degree each key started */
 static uint8_t held_deg[256];                   /* degrees sounding from the keys (mod n), for the wheel */
 static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
@@ -106,6 +107,16 @@ static void demo(void)
         seq_step_set(0, TR_SYN3, s, SF_DEG2, (int32_t)(13u * n / 22u));
         seq_step_set(0, TR_SYN3, s, SF_GATE, 16);
         seq_step_set(0, TR_SYN3, s, SF_VEL, 70);
+    }
+    /* drums: kick, snare, closed and open hat on track A (a mask of 4), clap and rim on track B */
+    for (s = 0; s < 16u; s++) {
+        uint32_t a = (s % 4u == 0u ? 1u : 0u) | (s % 8u == 4u ? 2u : 0u) | (s % 2u == 0u && s != 14u ? 4u : 0u) | (s == 14u ? 8u : 0u);
+        uint32_t bm = (s == 12u ? 1u : 0u) | (s == 3u || s == 7u || s == 11u ? 8u : 0u);
+        if (s == 10u) a |= 1u;
+        if (a) { seq_step_set(0, TR_DRUM_A, s, SF_ON, 1); seq_step_set(0, TR_DRUM_A, s, SF_NOTES, (int32_t)a); seq_step_set(0, TR_DRUM_A, s, SF_DEG0, (int32_t)a);
+                 seq_step_set(0, TR_DRUM_A, s, SF_VEL, s % 4u == 2u ? 80 : 110); }
+        if (bm) { seq_step_set(0, TR_DRUM_B, s, SF_ON, 1); seq_step_set(0, TR_DRUM_B, s, SF_NOTES, (int32_t)bm); seq_step_set(0, TR_DRUM_B, s, SF_DEG0, (int32_t)bm);
+                  seq_step_set(0, TR_DRUM_B, s, SF_VEL, 90); }
     }
     eng_set_param(1, P_VOICE_MODE, 1);          /* the bass: mono, so its slides glide */
     eng_set_param(1, P_CUTOFF, 6500);
@@ -251,7 +262,7 @@ static void draw_seq(uint32_t voices)
     char b[48], *p = b;
     uint32_t bpm = seq_tempo();
     p = put(p, playing_seq ? "PLAY " : "STOP "); p = putn(p, bpm / 100u); *p++ = '.'; p = putn(p, bpm / 10u % 10u);
-    p = put(p, "  "); p = putn(p, voices); p = put(p, stress ? "/8 TEST" : "/8 VOICES");
+    p = put(p, "  "); p = putn(p, voices); p = put(p, stress ? "/8 TEST" : fx_page ? "/8  FX" : "/8 VOICES");
     *p = 0;
     draw_line(190, b, stress ? M_AMB : M_DIM);
 }
@@ -322,6 +333,15 @@ static void midi_in(void)
 static void app_idle(void) { if (idle_ok) midi_in(); }
 
 /* the four knobs: detents step a parameter of part 1 */
+static void fxknob(uint32_t enc, uint32_t id, int32_t step)
+{
+    int32_t e = fm1_enc_take(enc), v;
+    if (!e) return;
+    v = (int32_t)eng_fx_get(id) + e * step;
+    if (v < 0) v = 0;
+    if (v > (int32_t)eng_fx_param_max(id)) v = (int32_t)eng_fx_param_max(id);
+    eng_fx_set(id, (uint32_t)v);
+}
 static void knob(uint32_t enc, uint32_t id, int32_t step)
 {
     int32_t e = fm1_enc_take(enc), v;
@@ -385,10 +405,18 @@ static void app_main(void)
         if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; }
 
         /* encoders */
-        knob(ENC_KNOB1, P_CUTOFF, 160);
-        knob(ENC_KNOB2, P_RESO, 160);
-        knob(ENC_KNOB3, P_E1_R, 160);
-        knob(ENC_KNOB4, P_DRIVE, 160);
+        if (b & (1u << BTN_FX)) fx_page = !fx_page;
+        if (fx_page) {                              /* FX: the reverb's and the delay's main controls */
+            fxknob(ENC_KNOB1, FX_REV_LEVEL, 200);
+            fxknob(ENC_KNOB2, FX_REV_SIZE, 200);
+            fxknob(ENC_KNOB3, FX_DLY_LEVEL, 200);
+            fxknob(ENC_KNOB4, FX_DLY_FB, 200);
+        } else {
+            knob(ENC_KNOB1, P_CUTOFF, 160);
+            knob(ENC_KNOB2, P_RESO, 160);
+            knob(ENC_KNOB3, P_E1_R, 160);
+            knob(ENC_KNOB4, P_DRIVE, 160);
+        }
         if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
             all_off();
             scale_i = (uint32_t)imod((int32_t)scale_i + e, (int32_t)sizeof LIB_ORDER);
@@ -415,6 +443,7 @@ static void app_main(void)
         for (k = 0; k < 16u; k++) fm1_led_key(KEY_LED(WHITE_KEY[k]), held_deg[imod(win + (int32_t)k, (int32_t)n)] != 0);
         fm1_led_key(BTN_PLAY, playing_seq);
         fm1_led_key(BTN_REC, stress);
+        fm1_led_key(BTN_FX, fx_page);
 
         /* the screen: only what changed, the numbers ten times a second */
         idle_ok = 1;
@@ -422,7 +451,7 @@ static void app_main(void)
         if (wheel_dirty) { wheel_dirty = 0; draw_wheel(); }
         if (scale_dirty) { scale_dirty = 0; draw_scale(); }
         if (fm1_ms - t_draw > 100u) {
-            uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | seq_tempo() << 2;
+            uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | (uint32_t)fx_page << 2 | seq_tempo() << 3;
             uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10 | (shed_count & 0xFFu) << 20;
             t_draw = fm1_ms;
             if (v != voices_drawn || sq != seq_drawn) { voices_drawn = v; seq_drawn = sq; draw_seq(v); }

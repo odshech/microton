@@ -69,6 +69,8 @@ const realSetInterval = setInterval; globalThis.setInterval = () => 0;
 process.on('unhandledRejection', e => { errors++; console.log('REJECTION', e); });
 
 window.FM1_PARAMS = JSON.parse(fs.readFileSync(path.join(root, 'site/params.json'), 'utf8'));
+window.FM1_DRUMS = JSON.parse(fs.readFileSync(path.join(root, 'site/drums.json'), 'utf8'));
+window.FM1_FX = JSON.parse(fs.readFileSync(path.join(root, 'site/fx.json'), 'utf8'));
 window.FM1_WASM_B64 = fs.readFileSync(path.join(root, 'site/engine.wasm')).toString('base64');
 window.FM1_WORKLET = fs.readFileSync(path.join(root, 'site/src/worklet.js'), 'utf8');
 require(path.join(root, 'tools/scl-codec.js')); window.SclCodec = globalThis.SclCodec || require(path.join(root, 'tools/scl-codec.js'));
@@ -162,6 +164,27 @@ check('load', () => eval(fs.readFileSync(path.join(root, 'site/src/app.js'), 'ut
     console.log('fallback audio peak:', peak.toFixed(3), '· status:', byId.get('audioState').textContent);
     if (!(peak > 0.01)) { errors++; console.log('FAIL: the fallback is silent'); }
   }
+  /* drums and effects: a pad sounds; the effects tab renders and its sliders reach the engine */
+  check('drum pads and effects', () => {
+    const L = new Float32Array(1024), R = new Float32Array(1024);
+    const proc = process.env.WORKLET ? wproc : null;
+    const render = () => { if (proc) { const l = new Float32Array(128), r = new Float32Array(128); for (let i = 0; i < 8; i++) { proc.process([], [[l, r]]); L.set(l, i * 128); } } else sproc.onaudioprocess({ outputBuffer: { getChannelData: c => (c ? R : L) } }); };
+    for (let i = 0; i < 200; i++) render();                        /* quiet first */
+    const pads = byId.get('pads').children.slice();
+    if (pads.length !== 8) throw new Error('pads: ' + pads.length);
+    pads[0].fire('pointerdown', { preventDefault() {} });
+    let pk = 0; for (let i = 0; i < 6; i++) { render(); for (const v of L) pk = Math.max(pk, Math.abs(v)); }
+    console.log('kick peak:', pk.toFixed(3));
+    if (!(pk > 0.05)) throw new Error('the kick pad is silent');
+    const tabs = byId.get('kitTabs').children.slice(); tabs[1].fire('click');
+    const size = byId.get('k-rev_size'); if (!size) throw new Error('no reverb controls');
+    size.value = '16000'; size.fire('input');
+    const sync = byId.get('k-dly_sync'); sync.value = '6'; sync.fire('change');
+    byId.get('kitResetBtn').fire('click');
+    byId.get('kitTabs').children[0].fire('click');
+    byId.get('pads').children[3].fire('pointerdown', { preventDefault() {} });
+    const tune = byId.get('k-tune'); tune.value = '9000'; tune.fire('input');
+  });
   /* (in the fallback the messages go straight into the engine; the sound above shows they arrived) */
   console.log(errors ? `${errors} problems` : 'ui smoke: ok');
   process.exit(errors ? 1 : 0);

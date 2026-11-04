@@ -1,0 +1,19 @@
+/* The effects' parameters, once. F(id, key, def, max, kind) as in params.def. Order = NRPN: append only. */
+/* reverb: Dattorro's plate */
+F(REV_SIZE,   "rev_size",   11000, 16383, C)   /* the decay: short room .. long hall */
+F(REV_PRE,    "rev_pre",     1600, 16383, C)   /* pre-delay 0 .. 100 ms */
+F(REV_DAMP,   "rev_damp",    5500, 16383, C)   /* the high frequencies die faster */
+F(REV_BW,     "rev_bw",     12500, 16383, C)   /* the input's bandwidth: dark .. bright */
+F(REV_MOD,    "rev_mod",     5000, 16383, C)   /* movement in the tail: smoother, a little chorus */
+F(REV_LEVEL,  "rev_level",   9000, 16383, C)
+/* delay: stereo, half rate (warm, like a tape or bucket-brigade delay) */
+F(DLY_TIME,   "dly_time",    9000, 16383, C)   /* free: 10 ms .. 1.2 s */
+F(DLY_SYNC,   "dly_sync",       8,    11, E)   /* free, 1/32 1/16T 1/16 1/8T 1/16. 1/8 1/4T 1/8. 1/4 1/4. 1/2 */
+F(DLY_FB,     "dly_fb",      7000, 16383, C)   /* feedback; past 90 % it builds up, held by the drive */
+F(DLY_TONE,   "dly_tone",   12000, 16383, C)   /* low-pass in the loop */
+F(DLY_LOWCUT, "dly_lowcut",  2500, 16383, C)   /* high-pass in the loop */
+F(DLY_PING,   "dly_ping",   10000, 16383, C)   /* 0 = both sides, full = ping-pong */
+F(DLY_WOW,    "dly_wow",     2500, 16383, C)   /* tape wow */
+F(DLY_DRIVE,  "dly_drive",   3000, 16383, C)   /* saturation in the loop */
+F(DLY_LEVEL,  "dly_level",   8000, 16383, C)
+F(DLY_TO_REV, "dly_to_rev",  4000, 16383, C)   /* the delay into the reverb */

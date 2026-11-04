@@ -2,3 +2,4 @@
 #pragma once
 #define SEQ_PATTERNS 4u                         /* 4 patterns in RAM on the FM-1 for now (12 KB each, in the pool) */
 #define SEQ_POOL __attribute__((section(".pool")))
+#define ENG_POOL __attribute__((section(".pool")))   /* the reverb and the delay: ~180 KB */

@@ -68,6 +68,9 @@
       }
       pending.length = 0;                             /* the full state follows: nothing old to replay */
       vals.forEach((v, pt) => PARAMS.forEach(p => node.port.postMessage({ t: 'p', part: pt, id: p.id, v: v[p.id] })));
+      node.port.postMessage({ t: 'call', f: 'eng_set_rate', a: [rate] });
+      kitVals.forEach((v, d) => DP.forEach(p => node.port.postMessage({ t: 'call', f: 'eng_drum_set', a: [d, p.id, v[p.id]] })));
+      FXP.forEach(p => node.port.postMessage({ t: 'call', f: 'eng_fx_set', a: [p.id, fxVals[p.id]] }));
       if (mirror) node.port.postMessage({ t: 'proj', bytes: new Uint8Array(mirror.memory.buffer, mirror.seq_project_bytes(), mirror.seq_project_size()).slice() });
       if (lib) node.port.postMessage({ t: 'lib', bytes: lib.bytes });
       applyTuning();
@@ -153,6 +156,7 @@
     vel_amp: ['רגישות ללחיצה', PCT],
     drift: ['סחיפת כוונון', r => `${(r * 10 / 16383).toFixed(1)} ¢`], variance: ['שוני בין קולות', PCT],
     out_sat: ['רוויית יציאה', PCT], volume: ['עוצמה כללית', PCT],
+    rev_send: ['שליחה לריברב', PCT], dly_send: ['שליחה לדיליי', PCT],
     pan: ['פאן', r => r === 8192 ? 'מרכז' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`],
   });
   for (const e of [1, 2, 3]) {
@@ -176,7 +180,7 @@
                        ['מתנד נמוך 2', ['l2_shape', 'l2_rate', 'l2_delay', 'l2_global']]]],
     ['מודולציה', 'mod'],
     ['קול ואופי', [['קול', ['voice_mode', 'uni_voices', 'uni_detune', 'uni_spread', 'glide', 'bend_range', 'vel_amp']],
-                   ['אופי אנלוגי', ['drift', 'variance', 'out_sat']], ['יציאה', ['volume', 'pan']]]],
+                   ['אופי אנלוגי', ['drift', 'variance', 'out_sat']], ['יציאה', ['volume', 'pan', 'rev_send', 'dly_send']]]],
   ];
 
   /* ================================================================== parameter values: saved per browser */
@@ -184,13 +188,20 @@
   const vals = [0, 1, 2].map(() => PARAMS.map(p => p.def));
   let part = 0, values = vals[0];
   const STORE = 'fm1-micro-v1';
-  function save() { try { localStorage.setItem(STORE, JSON.stringify({ parts: vals.map(v => Object.fromEntries(PARAMS.map(p => [p.key, v[p.id]]))), ref: $('ref').value, tun })); } catch (e) { /* storage off */ } }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify({ parts: vals.map(v => Object.fromEntries(PARAMS.map(p => [p.key, v[p.id]]))), ref: $('ref').value, tun,
+    kit: kitVals.map(v => Object.fromEntries(DP.map(p => [p.key, v[p.id]]))), fx: Object.fromEntries(FXP.map(p => [p.key, fxVals[p.id]])) })); } catch (e) { /* storage off */ } }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { saved = null; }
   const restoreInto = (v, o) => { for (const k in o) if (byKey[k]) v[byKey[k].id] = Math.max(0, Math.min(byKey[k].max, o[k] | 0)); };
   if (saved && saved.parts) saved.parts.forEach((o, i) => i < 3 && restoreInto(vals[i], o));
   else if (saved && saved.v) restoreInto(vals[0], saved.v);
   if (saved && saved.ref) $('ref').value = saved.ref;
+  /* the drum kit and the effects: the same store */
+  const DP = window.FM1_DRUMS.params, KIT = window.FM1_DRUMS.kit, FXP = window.FM1_FX;
+  const dpKey = Object.fromEntries(DP.map(p => [p.key, p])), fxKey = Object.fromEntries(FXP.map(p => [p.key, p]));
+  const kitVals = KIT.map(r => r.slice()), fxVals = FXP.map(p => p.def);
+  if (saved && saved.kit) saved.kit.forEach((o, d) => { if (d < 8) for (const k in o) if (dpKey[k]) kitVals[d][dpKey[k].id] = Math.max(0, Math.min(dpKey[k].max, o[k] | 0)); });
+  if (saved && saved.fx) for (const k in saved.fx) if (fxKey[k]) fxVals[fxKey[k].id] = Math.max(0, Math.min(fxKey[k].max, saved.fx[k] | 0));
 
   const inputs = new Map();  /* id → { el, val, row } */
   function setParam(id, v, fromUi) {
@@ -279,6 +290,103 @@
   function setPart(pt) { part = pt; values = vals[pt]; document.querySelectorAll('#partTabs button').forEach((b, i) => b.setAttribute('aria-pressed', String(i === pt))); renderTabs(); }
   document.querySelectorAll('#partTabs button').forEach((b, i) => b.addEventListener('click', () => setPart(i)));
   const playPart = () => part;
+
+  /* ================================================================== drums and effects */
+  const DRUM_NAMES = ['בס', 'סנר', 'האט סגור', 'האט פתוח', 'מחיאה', 'טום נמוך', 'טום גבוה', 'רים'];
+  const HZC = c => HZ(F0 * Math.pow(2, c / 1200));
+  const PANF = r => r === 8192 ? 'מרכז' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`;
+  const DL = {
+    tune: ['כוונון', r => HZC(1548 + r * 9600 / 16383)],
+    pitch_amt: ['גלישת גובה (חצאי טון)', r => r ? `+${(r * 48 / 16383).toFixed(1)}` : 'ללא'],
+    pitch_dec: ['זמן הגלישה', T], decay: ['דעיכה', T],
+    ratio: ['יחס המאפנן', ['0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '7', '1.41', '2.76', '3.14', '5.19', '7.13', '14']],
+    fm: ['עומק אפנון', PCT], fm_dec: ['דעיכת האפנון', T], feedback: ['משוב', PCT],
+    noise: ['רעש', PCT], noise_dec: ['דעיכת הרעש', T],
+    noise_tone: ['גוון הרעש', r => { const t = r - 8192; if (Math.abs(t) < 200) return 'שטוח';
+      return t > 0 ? `HP ${HZC(1548 + t * 9200 / 8191)}` : `LP ${HZC(13700 + t * 9500 / 8192)}`; }],
+    clap: ['פרצי מחיאה', ['ללא', '1', '2', '3']],
+    drive: ['דרייב', OFF_OR(r => `×${(1 + 7 * r / 16383).toFixed(2)}`)], level: ['עוצמה', PCT], pan: ['פאן', PANF],
+    rev: ['שליחה לריברב', PCT], dly: ['שליחה לדיליי', PCT], choke: ['קבוצת חיתוך', ['ללא', 'קבוצה 1', 'קבוצה 2']],
+  };
+  const FL = {
+    rev_size: ['גודל (דעיכה)', r => (0.2 + 0.78 * r / 16383).toFixed(2)], rev_pre: ['השהיה מקדימה', r => `${Math.round(r * 100 / 16383)} ms`],
+    rev_damp: ['ריכוך גבוהים', PCT], rev_bw: ['בהירות', PCT], rev_mod: ['תנועה', PCT], rev_level: ['עוצמה', PCT],
+    dly_time: ['זמן חופשי', r => { const ms = 10 * Math.pow(120, r / 16383); return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`; }],
+    dly_sync: ['סנכרון לטמפו', ['חופשי', '1/32', '1/16 טריולה', '1/16', '1/8 טריולה', '1/16 מנוקד', '1/8', '1/4 טריולה', '1/8 מנוקד', '1/4', '1/4 מנוקד', '1/2']],
+    dly_fb: ['משוב', r => `${Math.round(r * 110 / 16383)}%`], dly_tone: ['גוון', r => HZC(3000 + r * 10000 / 16383)],
+    dly_lowcut: ['חיתוך נמוכים', r => HZC(2400 + r * 6000 / 16383)], dly_ping: ['פינג פונג', PCT], dly_wow: ['רעד סרט', PCT],
+    dly_drive: ['רוויה', r => `×${(1 + 3 * r / 16383).toFixed(2)}`], dly_level: ['עוצמה', PCT], dly_to_rev: ['אל הריברב', PCT],
+  };
+  const DRUM_GROUPS = [['טון', ['tune', 'pitch_amt', 'pitch_dec', 'decay']], ['אפנון FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
+    ['רעש', ['noise', 'noise_tone', 'noise_dec', 'clap']], ['יציאה', ['drive', 'level', 'pan', 'rev', 'dly', 'choke']]];
+  const FX_GROUPS = [['ריברב', ['rev_size', 'rev_pre', 'rev_damp', 'rev_bw', 'rev_mod', 'rev_level']],
+    ['דיליי', ['dly_sync', 'dly_time', 'dly_fb', 'dly_tone', 'dly_lowcut', 'dly_ping', 'dly_wow', 'dly_drive', 'dly_level', 'dly_to_rev']]];
+  let kitTab = 0, drumSel = 0;
+  const kitInputs = new Map();
+  function setDrum(d, id, v) {
+    const p = DP[id]; v = Math.max(0, Math.min(p.max, Math.round(v))); kitVals[d][id] = v;
+    send({ t: 'call', f: 'eng_drum_set', a: [d, id, v] });
+    const ui = kitInputs.get('d' + id); if (ui && d === drumSel) { ui.el.value = v; ui.show(); }
+    clearTimeout(setParam.t); setParam.t = setTimeout(save, 300);
+  }
+  function setFx(id, v) {
+    const p = FXP[id]; v = Math.max(0, Math.min(p.max, Math.round(v))); fxVals[id] = v;
+    send({ t: 'call', f: 'eng_fx_set', a: [id, v] });
+    const ui = kitInputs.get('f' + id); if (ui) { ui.el.value = v; ui.show(); }
+    clearTimeout(setParam.t); setParam.t = setTimeout(save, 300);
+  }
+  function kitControl(key, isFx) {
+    const p = isFx ? fxKey[key] : dpKey[key], [label, fmt] = (isFx ? FL : DL)[key];
+    const get = () => isFx ? fxVals[p.id] : kitVals[drumSel][p.id];
+    const def = () => isFx ? p.def : KIT[drumSel][p.id];
+    const set = v => isFx ? setFx(p.id, v) : setDrum(drumSel, p.id, v);
+    const row = document.createElement('div'); row.className = 'ctl';
+    const lab = document.createElement('label'); lab.textContent = label; lab.htmlFor = 'k-' + key;
+    let el, val = null;
+    if (Array.isArray(fmt)) {
+      el = document.createElement('select'); fmt.forEach((n, i) => el.add(new Option(n, String(i))));
+      el.addEventListener('change', () => set(+el.value)); row.append(lab, el, document.createElement('span'));
+    } else {
+      el = document.createElement('input'); el.type = 'range'; el.min = 0; el.max = p.max; el.step = 1;
+      el.addEventListener('input', () => set(+el.value)); el.addEventListener('dblclick', () => set(def()));
+      val = document.createElement('span'); val.className = 'val'; row.append(lab, el, val);
+    }
+    el.id = 'k-' + key; el.value = get();
+    const show = () => { if (val) val.textContent = fmt(get()); row.classList.toggle('changed', get() !== def()); };
+    kitInputs.set((isFx ? 'f' : 'd') + p.id, { el, show }); show();
+    return row;
+  }
+  function hitDrum(d, vel = 110) {
+    startAudio();
+    send({ t: 'call', f: 'eng_drum_hit', a: [d, vel] });
+    const b = $('pads').children[d]; if (b) { b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 90); }
+  }
+  function renderKit() {
+    const bar = $('kitTabs'); bar.textContent = '';
+    ['תופים', 'ריברב ודיליי'].forEach((name, i) => {
+      const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'tab'); b.textContent = name;
+      b.setAttribute('aria-selected', String(i === kitTab)); b.addEventListener('click', () => { kitTab = i; renderKit(); });
+      bar.append(b);
+    });
+    const pads = $('pads'); pads.textContent = ''; pads.hidden = kitTab !== 0;
+    DRUM_NAMES.forEach((n, d) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = n; b.setAttribute('aria-pressed', String(d === drumSel));
+      b.addEventListener('pointerdown', e => { e.preventDefault(); hitDrum(d); if (d !== drumSel) { drumSel = d; renderKit(); } });
+      b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hitDrum(d); drumSel = d; renderKit(); } });
+      pads.append(b);
+    });
+    const body = $('kitBody'); body.textContent = ''; kitInputs.clear();
+    (kitTab === 0 ? DRUM_GROUPS : FX_GROUPS).forEach(([title, keys]) => {
+      const g = document.createElement('div'); g.className = 'group';
+      const h = document.createElement('h3'); h.textContent = kitTab === 0 && title === 'טון' ? `${DRUM_NAMES[drumSel]}: ${title}` : title; g.append(h);
+      keys.forEach(k => g.append(kitControl(k, kitTab === 1)));
+      body.append(g);
+    });
+  }
+  $('kitResetBtn').addEventListener('click', () => {
+    if (kitTab === 0) DP.forEach(p => setDrum(drumSel, p.id, KIT[drumSel][p.id])); else FXP.forEach(p => setFx(p.id, p.def));
+    renderKit();
+  });
 
   /* ================================================================== scales */
   const edo = (n, period = 1200) => Array.from({ length: n }, (_, k) => (period * (k + 1) / n).toFixed(5)).join('\n');
@@ -644,7 +752,7 @@
   const OP = { CLEAR_STEP: 0, CLEAR_TRACK: 1, CLEAR_PATTERN: 2, COPY_STEP: 3, PASTE_STEP: 4, COPY_PAGE: 5, PASTE_PAGE: 6,
     COPY_TRACK: 7, PASTE_TRACK: 8, COPY_PATTERN: 9, PASTE_PATTERN: 10, SHIFT: 11, REVERSE: 12, DOUBLE: 13, EUCLID: 14, RANDOM: 15, UNDO: 16 };
   const TRACKS = ['צליל 1', 'צליל 2', 'צליל 3', 'מידי חיצוני', 'תופים א', 'תופים ב'];
-  const DRUMS = [['בס', 'סנר', 'האט סגור', 'האט פתוח'], ['מחיאה', 'טום נמוך', 'טום גבוה', 'פעמון']];
+  const DRUMS = [['בס', 'סנר', 'האט סגור', 'האט פתוח'], ['מחיאה', 'טום נמוך', 'טום גבוה', 'רים']];
   let editPat = 0, editTrack = 0, page = 0, selStep = 0, rec = false, stepRec = false, lastDeg = 0;
   let play = { playing: 0, pos: [-1, -1, -1, -1, -1, -1], pat: 0, q: -1, row: 0 };
 
@@ -952,6 +1060,7 @@
 
   /* ================================================================== start */
   renderTabs();
+  renderKit();
   (async () => {
     try { mirror = (await WebAssembly.instantiate(b64bytes(window.FM1_WASM_B64), {})).instance.exports; mirror.w_init(); }
     catch (e) { setStatus('המנוע לא נטען בדפדפן הזה.', true); }

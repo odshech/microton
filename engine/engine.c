@@ -40,7 +40,7 @@ typedef struct {
     lfop_t lfo[2];
     modp_t mod[8];
     int32_t vmode, uni_n, uni_det_c16, uni_spread, glide, bend_range, vel_amp;
-    int32_t drift_c16, variance, out_sat, volume, pan;
+    int32_t drift_c16, variance, out_sat, volume, pan, rev_send, dly_send;
 } derived_t;
 static derived_t D[ENG_PARTS];
 void eng_rt_commit(void);
@@ -121,6 +121,8 @@ static void derive(uint32_t part)
     X->variance = q15(R[P_VARIANCE]);
     X->out_sat = q15(R[P_OUT_SAT]);
     X->volume = q15(R[P_VOLUME]);
+    X->rev_send = q15(R[P_REV_SEND]);
+    X->dly_send = q15(R[P_DLY_SEND]);
     X->pan = bip(R[P_PAN]) * 4;                                         /* Q15 */
 }
 
@@ -288,28 +290,7 @@ ENG_INLINE int32_t saw(uint32_t p, uint32_t inc, uint32_t rinv)
     if (p < two || 0u - p < two) s += saw_edge(p, two, rinv);
     return s;
 }
-ENG_INLINE int32_t pulse(uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
-{
-    return saw(p, inc, rinv) - saw(p + pw, inc, rinv) + ((int32_t)(pw >> 16) - 32768);
-}
-ENG_INLINE int32_t shape(uint32_t s, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
-{
-    switch (s) {
-    case 0: return sine(p);
-    case 1: return tri(p);
-    case 2: return saw(p, inc, rinv);
-    default: return pulse(p, inc, rinv, pw);
-    }
-}
 /* the continuous wave: 0 sine, 4096 triangle, 8192 saw, 12288 pulse */
-ENG_INLINE int32_t osc(int32_t pos, uint32_t p, uint32_t inc, uint32_t rinv, uint32_t pw)
-{
-    uint32_t s = (uint32_t)pos >> 12, f = (uint32_t)pos & 4095u;
-    int32_t a = shape(s, p, inc, rinv, pw), b;
-    if (!f || s >= 3u) return a;
-    b = shape(s + 1u, p, inc, rinv, pw);
-    return a + (((b - a) * (int32_t)f) >> 12);
-}
 static inline uint32_t rinv_of(uint32_t inc) { uint32_t d = inc >> 8; return 0x80000000u / (d ? d : 1u); }
 
 /* soft clip: slope 1 at 0, reaches ±32768 at ±49152 */
@@ -357,7 +338,7 @@ static int32_t stack[ENG_PARTS][16];
 static uint32_t nstack[ENG_PARTS];
 
 /* the event queue: the main loop writes head, the audio interrupt writes tail */
-enum { EV_ON, EV_OFF, EV_ALL, EV_PARAM };
+enum { EV_ON, EV_OFF, EV_ALL, EV_PARAM, EV_DRUM };
 typedef struct { int32_t type, part, a, b; } ev_t;
 #define EVQ 512u                                                         /* a whole sound's parameters fit */
 static ev_t evq[EVQ];
@@ -365,7 +346,7 @@ static volatile uint32_t ev_head, ev_tail;
 static int push(int32_t type, uint32_t part, int32_t a, int32_t b)
 {
     uint32_t h = ev_head, nh = (h + 1u) & (EVQ - 1u);
-    if (nh == ev_tail || part >= ENG_PARTS) return -1;                   /* full: dropped */
+    if (nh == ev_tail || part >= (type == EV_DRUM ? ENG_DRUMS : ENG_PARTS)) return -1;   /* full: dropped */
     evq[h].type = type; evq[h].part = (int32_t)part; evq[h].a = a; evq[h].b = b;
     ev_head = nh;
     return 0;
@@ -703,6 +684,10 @@ static void voice_run(voice_t *v, int32_t *bus)
     }
 }
 
+/* ------------------------------------------------------------------ drums and effects */
+#include "drums.c"
+#include "fx.c"
+
 /* ------------------------------------------------------------------ public */
 
 void eng_init(void)
@@ -727,7 +712,11 @@ void eng_init(void)
     }
     ev_head = ev_tail = 0;
     eng_rt_hook = 0;
+    drums_init();
+    fx_init();
 }
+
+void eng_drum_hit(uint32_t drum, uint32_t velocity) { push(EV_DRUM, drum, 0, (int32_t)velocity); }
 
 void eng_note_on(uint32_t part, int32_t degree, uint32_t velocity)
 {
@@ -810,6 +799,7 @@ void eng_render(int32_t *out, uint32_t n)
 {
     static int32_t bus[ENG_PARTS][2 * ENG_BLOCK];
     static int32_t dc[2];                                                /* DC blocker state, Q8 */
+    static int32_t mix[2 * ENG_BLOCK], srev[ENG_BLOCK], sdly[ENG_BLOCK];
     const scale_t *sc = &SC[sc_active];
     uint32_t b, i, p, live;
 
@@ -820,6 +810,7 @@ void eng_render(int32_t *out, uint32_t n)
         if (e->type == EV_ON) do_on(part, e->a, e->b, 0);
         else if (e->type == EV_OFF) do_off(part, e->a);
         else if (e->type == EV_ALL) do_all(e->a);
+        else if (e->type == EV_DRUM) drum_hit(part, e->b);
         else if (raw[part][e->a] != (uint16_t)e->b) {
             raw[part][e->a] = (uint16_t)e->b;
             if (e->a == P_VOICE_MODE || e->a == P_UNI_VOICES) do_all((int32_t)part);
@@ -852,21 +843,34 @@ void eng_render(int32_t *out, uint32_t n)
             voice_tick(v, sc, i);
             voice_run(v, bus[v->part]);
         }
-        for (p = 0; p < ENG_PARTS; p++)                                  /* each part's output stage, once per sample */
-            if ((live & (1u << p)) && D[p].out_sat) {
-                int32_t *bp = bus[p], os = D[p].out_sat;
-                for (i = 0; i < 2u * ENG_BLOCK; i++) { int32_t y = bp[i]; bp[i] = y + (int32_t)(((i64)(sat(y + (y >> 1)) - y) * os) >> 15); }
-            }
+        for (i = 0; i < 2u * ENG_BLOCK; i++) mix[i] = 0;
+        for (i = 0; i < ENG_BLOCK; i++) srev[i] = sdly[i] = 0;
+        for (p = 0; p < ENG_PARTS; p++) {                                /* each part's output stage and sends */
+            int32_t *bp = bus[p], os = D[p].out_sat, rs = D[p].rev_send, ds = D[p].dly_send;
+            if (!(live & (1u << p))) continue;
+            if (os) for (i = 0; i < 2u * ENG_BLOCK; i++) { int32_t y = bp[i]; bp[i] = y + (int32_t)(((i64)(sat(y + (y >> 1)) - y) * os) >> 15); }
+            for (i = 0; i < 2u * ENG_BLOCK; i++) mix[i] += bp[i];
+            if (rs) for (i = 0; i < ENG_BLOCK; i++) srev[i] += (int32_t)(((i64)((bp[2 * i] + bp[2 * i + 1]) >> 1) * rs) >> 15);
+            if (ds) for (i = 0; i < ENG_BLOCK; i++) sdly[i] += (int32_t)(((i64)((bp[2 * i] + bp[2 * i + 1]) >> 1) * ds) >> 15);
+        }
+        drums_commit();
+        drums_run(mix, srev, sdly);
+        fx_run(mix, srev, sdly);
         for (i = 0; i < ENG_BLOCK; i++) {
             uint32_t c;
             for (c = 0; c < 2u; c++) {
-                int32_t x = 0;
-                for (p = 0; p < ENG_PARTS; p++) if (live & (1u << p)) x += bus[p][2 * i + c];
+                int32_t x = mix[2 * i + c];
                 if (x > 2097151) x = 2097151;                                    /* keeps x << 8 in 32 bits */
                 if (x < -2097152) x = -2097152;
                 dc[c] += ((x << 8) - dc[c]) >> 10;                               /* coupling cap: ~7 Hz */
                 if (x == 0 && dc[c] > -2048 && dc[c] < 2048) dc[c] = 0;         /* settle on true silence */
                 x -= dc[c] >> 8;
+                if (x > 24576 || x < -24576) {                                  /* a soft knee, not a hard clip */
+                    int32_t t = (x < 0 ? -x : x) - 24576;
+                    if (t > 1 << 20) t = 1 << 20;
+                    t = 24576 + (int32_t)(((uint32_t)t * 8191u) / ((uint32_t)t + 8191u));
+                    x = x < 0 ? -t : t;
+                }
                 out[2u * (b + i) + c] += x;
             }
         }

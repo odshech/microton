@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* the dry synth: the effects off (they colour the measurements) */
+static void eng_init_dry(void) { eng_init(); eng_fx_set(FX_REV_LEVEL, 0); eng_fx_set(FX_DLY_LEVEL, 0); }
 
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -33,7 +35,7 @@ static void run(double seconds)                    /* render in blocks of 16, co
 }
 static void fresh(void)
 {
-    eng_init(); tun_edo(12, 19200); seq_init(); nev = 0; frames = 0; energy = 0;
+    eng_init_dry(); tun_edo(12, 19200); seq_init(); nev = 0; frames = 0; energy = 0;
     for (uint32_t t = 0; t < SEQ_TRACKS; t++) seq_track_set(0, t, TF_MUTE, t != TR_EXT);  /* only the external track */
 }
 static void step_on(uint32_t p, uint32_t t, uint32_t s, int deg)
@@ -152,7 +154,7 @@ int main(void)
     { int on = 0; for (int i = 0; i < nev; i++) on += evs[i].on ? 1 : -1; CHECK(on == 0, "stop leaves nothing sounding (%d)", on); }
 
     /* 9. the synth tracks sound; a lock on the step (cutoff to the floor) silences it */
-    eng_init(); tun_edo(12, 19200); seq_init(); frames = 0; energy = 0;
+    eng_init_dry(); tun_edo(12, 19200); seq_init(); frames = 0; energy = 0;
     for (int s = 0; s < 16; s++) step_on(0, TR_SYN1, s, 0);
     seq_play(); run(1.0);
     double open = energy; energy = 0;
