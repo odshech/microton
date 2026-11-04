@@ -1,8 +1,9 @@
 /* drums.c — eight FM drums, included by engine.c (it uses the engine's sine, sat, noise and tables).
  *
  * A drum: a carrier and a modulator (phase modulation, as in the DX7), the modulator with feedback; a pitch
- * envelope on both; an index envelope; filtered noise with its own envelope and, for claps, repeated bursts;
- * a drive, a level, a pan and two effect sends. Each drum is one voice: a new hit restarts it. Drums in the
+ * envelope on both; an index envelope. Beside it noise and "metal" (six square waves at the TR-808's cymbal
+ * ratios) go through a resonant state-variable filter (low, band or high pass) with their own envelope and, for
+ * claps, repeated bursts. Then a drive, a level, a pan and two effect sends. Each drum is one voice: a new hit restarts it. Drums in the
  * same choke group cut each other (the open hi-hat stops when the closed one plays).
  * Envelopes run at the control rate (every 16 frames), the amplitudes are ramped across the block.
  * Integers only: Q15 audio, Q30 envelopes, 32-bit phases. */
@@ -19,16 +20,18 @@ static const uint16_t DP_MAX[DP_COUNT] = {
 
 /* the kit: kick, snare, closed hat, open hat, clap, low tom, high tom, rim */
 static const uint16_t DKIT[ENG_DRUMS][DP_COUNT] = {
-/*  tune  p.amt p.dec ratio  fm   fm.dec fb   noise n.tone n.dec decay clap drive level pan   rev   dly  choke */
-  { 2600, 9000, 3800,    1, 2400, 2800,    0, 1000, 3000, 1400, 8400,    0, 3000, 11475, 8192,    0,    0,    0 },
-  { 6600, 3600, 3000,    1, 3000, 3000,    0, 7400, 13500, 6400, 6200,    0, 2500, 10200, 8192, 2600,    0,    0 },
-  { 9800,    0, 2000,   13, 9000, 4800, 9000, 7500, 16383, 5600, 5000,    0,    0, 7650, 9600, 1200,    0,    1 },
-  { 9800,    0, 2000,   13, 9000, 8200, 9000, 7500, 16000, 9800, 9400,    0,    0, 7310, 9600, 2400, 2000,    1 },
-  { 7000,    0, 2000,    1,    0, 2000,    0, 12500, 13000, 6800, 1200,    3, 2000, 9775, 7400, 4200,    0,    0 },
-  { 4700, 5200, 4600,    1, 1600, 3600,    0,  600, 4000, 1800, 8000,    0, 1500, 9775, 6200, 2000,    0,    0 },
-  { 5800, 5200, 4400,    1, 1600, 3600,    0,  600, 4000, 1800, 7600,    0, 1500, 9350, 10200, 2000,    0,    0 },
-  { 9000, 1500, 1800,    6, 4200, 2600, 2500, 2500, 13500, 3200, 3800,    0, 4000, 8500, 8192, 1800,    0,    0 },
+/*  tune  p.amt p.dec ratio fm   fm.dec fb    noise n.cut n.dec decay clap drive level pan   rev   dly  choke n.mode n.reso metal tone */
+  { 2600, 9000, 3800, 1,    800, 2800, 0,    1500, 3556, 1200, 9200, 0,   6000, 10500, 8192, 0,    0,    0,    0,    0,    0,     16383 },
+  { 6600, 2400, 2600, 2,   2500, 3200, 0,    9000, 9673, 6600, 6800, 0,   3000, 11000, 8192, 2600, 0,    0,    2,    2500, 0,     16383 },
+  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13713, 5800, 2000, 0,  0,    14500, 9600, 1200, 0,    1,    2,    4000, 16383, 0 },
+  { 8859, 0,    2000, 1,      0, 2000, 0,    6000, 13300, 9600, 2000, 0,  0,    13000, 9600, 2400, 2000, 1,    2,    4000, 16383, 0 },
+  { 7000, 0,    2000, 1,      0, 2000, 0,   16383, 8746, 7000, 1200, 3,   2000, 13500, 7400, 4200, 0,    0,    1,    7000, 0,     0 },
+  { 4700, 3000, 4600, 1,   1200, 3600, 0,    1500, 5791, 2200, 8600, 0,   2500, 10000, 6200, 2000, 0,    0,    0,    0,    0,     16383 },
+  { 5800, 3000, 4400, 1,   1200, 3600, 0,    1500, 5791, 2200, 8200, 0,   2500, 9500,  10200, 2000, 0,   0,    0,    0,    0,     16383 },
+  { 9000, 1500, 1800, 6,   4200, 2600, 2500, 3000, 12627, 3000, 4400, 0,  4000, 11000, 8192, 1800, 0,    0,    1,    5000, 3000,  12000 },
 };
+/* the TR-808's six cymbal oscillators, as ratios to the lowest (205.3, 304.4, 369.6, 522.7, 540, 800 Hz), Q16 */
+static const uint32_t METAL_Q16[6] = {65536, 97170, 117983, 166863, 172381, 255380};
 static const uint16_t RATIO_Q8[16] = {     /* the modulator's ratio to the carrier: whole, half and inharmonic */
     128, 256, 384, 512, 640, 768, 1024, 1280, 1536, 1792, 361, 706, 804, 1329, 1825, 3584 };
 
@@ -36,7 +39,8 @@ typedef struct {
     int32_t base_c16, pamt_c16;             /* the pitch, in cents x 16 above 8.18 Hz; the pitch envelope's depth */
     int32_t pdec, fdec, ndec, adec;         /* decay coefficients per control tick, Q30 */
     uint32_t ratio;                         /* Q8 */
-    int32_t fm, fb, noise, ng, nhp, nflat;  /* index Q15, feedback Q15, noise level Q15, noise filter */
+    int32_t fm, fb, noise, metal, tone;     /* index Q15, feedback Q15, levels Q15 */
+    int32_t a1, a2, a3, k, mode;            /* the noise filter: ZDF state-variable, Q15 (k: Q16) */
     uint32_t clap;
     int32_t drive, level, gl, gr, rev, dly, choke;
 } dderived_t;
@@ -45,7 +49,8 @@ typedef struct {
     int32_t m1, m2;                         /* the modulator's last two outputs (feedback) */
     int32_t aenv, penv, fenv, nenv;         /* Q30 */
     int32_t a, n;                           /* amplitudes now, Q15 (ramped) */
-    int32_t vel, lp, bursts, btimer, on;
+    int32_t vel, ic1, ic2, bursts, btimer, on;
+    uint32_t mp[6];                         /* the metal's phases */
 } dvoice_t;
 
 static uint16_t draw_[ENG_DRUMS][DP_COUNT];
@@ -71,7 +76,6 @@ static void drum_derive(uint32_t d)
 {
     const uint16_t *R = draw_[d];
     dderived_t *X = &DD[d];
-    int32_t t = (int32_t)R[DP_NOISE_TONE] - 8192;
     X->base_c16 = (1548 + (int32_t)((R[DP_TUNE] * 9600u) / 16383u)) * 16;    /* 20 Hz .. 5 kHz */
     X->pamt_c16 = (int32_t)((R[DP_PITCH_AMT] * 4800u) / 16383u) * 16;       /* 0 .. 4 octaves down to the tune */
     X->pdec = time_coef(R[DP_PITCH_DEC]);
@@ -82,15 +86,20 @@ static void drum_derive(uint32_t d)
     X->fm = q15(R[DP_FM]);
     X->fb = q15(R[DP_FEEDBACK]);
     X->noise = q15(R[DP_NOISE]);
-    /* noise tone: below the centre a low-pass closing to 200 Hz, above it a high-pass opening to 12 kHz */
-    X->nflat = t > -200 && t < 200;
-    X->nhp = t > 0;
+    X->metal = q15(R[DP_METAL]);
+    X->tone = q15(R[DP_TONE]);
+    /* the noise filter (Zavalishin's TPT state-variable): g = tan(pi f / fs), k = 1/Q = 2 .. 0.08 */
     {
-        int32_t c = X->nhp ? 1548 + (int32_t)(((uint32_t)t * 9200u) / 8191u)          /* 20 Hz .. 12 kHz */
-                           : 13700 - (int32_t)(((uint32_t)-t * 9500u) / 8192u);       /* 22 kHz .. 200 Hz */
-        if (c < 0) c = 0;
-        if (c > FILT_CENTS_MAX - 1) c = FILT_CENTS_MAX - 1;
-        X->ng = (int32_t)FILT_G_Q16[(uint32_t)c / FILT_CENTS_STEP];
+        uint32_t c = 4335u + (R[DP_NOISE_CUT] * 8795u) / 16383u;                 /* cents: 100 Hz .. 16 kHz */
+        uint32_t i = c / FILT_CENTS_STEP, f = c % FILT_CENTS_STEP;
+        int32_t g = (int32_t)(SVF_G_Q16[i] + ((SVF_G_Q16[i + 1] - SVF_G_Q16[i]) * f) / FILT_CENTS_STEP);   /* Q16 */
+        int32_t k = 131072 - (int32_t)((R[DP_NOISE_RESO] * 125829u) / 16383u);  /* Q16 */
+        uint32_t den = 65536u + (uint32_t)(((i64)g * (g + k)) >> 16);            /* 1 + g (g + k), Q16 */
+        X->a1 = (int32_t)(0x80000000u / den);                                    /* Q15 */
+        X->a2 = (int32_t)(((i64)g * X->a1) >> 16);
+        X->a3 = (int32_t)(((i64)g * X->a2) >> 16);
+        X->k = k;
+        X->mode = R[DP_NOISE_MODE] > 2u ? 2 : (int32_t)R[DP_NOISE_MODE];
     }
     X->clap = R[DP_CLAP] > 3u ? 3u : R[DP_CLAP];
     X->drive = R[DP_DRIVE] ? 4096 + (int32_t)((R[DP_DRIVE] * 28672u) / 16383u) : 0;    /* x1 .. x8 */
@@ -139,7 +148,7 @@ static void drum_hit(uint32_t d, int32_t vel)
     v->aenv = v->penv = v->fenv = v->nenv = ONE_Q30;
     v->vel = vel < 1 ? 1 : vel > 127 ? 127 : vel;
     v->bursts = (int32_t)DD[d].clap; v->btimer = CLAP_BLOCKS;
-    if (!v->on) { v->a = v->n = 0; v->lp = 0; }
+    if (!v->on) { v->a = v->n = 0; v->ic1 = v->ic2 = 0; for (i = 0; i < 6u; i++) v->mp[i] = eng_rnd(); }
     v->on = 1;
 }
 
@@ -152,8 +161,8 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
     for (d = 0; d < ENG_DRUMS; d++) {
         dvoice_t *v = &DV[d];
         const dderived_t *X = &DD[d];
-        int32_t velq, at, nt, as, ns, idx, a, n, lp, m1, m2, fbk, gl, gr, rv, dl, drv;
-        uint32_t cinc, minc, cph, mph;
+        int32_t velq, at, nt, as, ns, idx, a, n, ic1, ic2, m1, m2, fbk, gl, gr, rv, dl, drv, nl, ml;
+        uint32_t cinc, minc, cph, mph, minc6[6], j;
         if (!v->on) continue;
         /* the control tick */
         v->aenv = edecay(v->aenv, X->adec);
@@ -162,15 +171,17 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
         v->fenv = edecay(v->fenv, X->fdec);
         if (v->bursts > 0 && --v->btimer == 0) { v->nenv = ONE_Q30; v->bursts--; v->btimer = CLAP_BLOCKS; }
         velq = 8192 + ((v->vel * 24576) / 127);
-        at = (int32_t)(((i64)(v->aenv >> 15) * velq) >> 15);
-        nt = (int32_t)(((((i64)(v->nenv >> 15) * X->noise) >> 15) * velq) >> 15);
+        at = (int32_t)(((((i64)(v->aenv >> 15) * velq) >> 15) * X->tone) >> 15);
+        nt = (X->noise || X->metal) ? (int32_t)(((i64)(v->nenv >> 15) * velq) >> 15) : 0;
         if (at < 4 && nt < 4 && v->bursts == 0 && v->a < 4 && v->n < 4) { v->on = 0; continue; }
         cinc = drum_inc(X->base_c16 + (int32_t)(((i64)X->pamt_c16 * (v->penv >> 15)) >> 15));
         minc = (uint32_t)(((u64)cinc * X->ratio) >> 8);
         idx = (int32_t)(((i64)X->fm * (v->fenv >> 15)) >> 15) >> 1;   /* Q14: up to 4 pi */
         as = (at - v->a) / (int32_t)ENG_BLOCK;
         ns = (nt - v->n) / (int32_t)ENG_BLOCK;
-        a = v->a; n = v->n; lp = v->lp; m1 = v->m1; m2 = v->m2; cph = v->cph; mph = v->mph;
+        a = v->a; n = v->n; ic1 = v->ic1; ic2 = v->ic2; m1 = v->m1; m2 = v->m2; cph = v->cph; mph = v->mph;
+        nl = X->noise; ml = X->metal;
+        if (ml) { uint32_t b0 = drum_inc(X->base_c16); for (j = 0; j < 6u; j++) minc6[j] = (uint32_t)(((u64)b0 * METAL_Q16[j]) >> 16); }
         fbk = X->fb >> 1; gl = X->gl; gr = X->gr; drv = X->drive;
         rv = (int32_t)(((i64)X->rev * X->level) >> 15);
         dl = (int32_t)(((i64)X->dly * X->level) >> 15);
@@ -182,12 +193,21 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
             mph += minc; cph += cinc;
             s = (c * a) >> 15;
             if (n) {
-                nz = rnd_q15();
-                if (!X->nflat) {
-                    lp += (int32_t)(((i64)X->ng * (nz - lp)) >> 16);
-                    nz = X->nhp ? nz - lp : lp;
+                int32_t v1, v2, v3, y;
+                nz = nl ? (rnd_q15() * nl) >> 15 : 0;
+                if (ml) {                                                   /* six squares: -6 .. 6 */
+                    int32_t sq = 0;
+                    for (j = 0; j < 6u; j++) { v->mp[j] += minc6[j]; sq += (int32_t)(v->mp[j] >> 31); }
+                    nz += (((6 - 2 * sq) * 5461) * ml) >> 15;
                 }
-                s += (nz * n) >> 15;
+                v3 = nz - ic2;                                              /* the TPT SVF */
+                v1 = (int32_t)(((i64)X->a1 * ic1 + (i64)X->a2 * v3) >> 15);
+                v2 = ic2 + (int32_t)(((i64)X->a2 * ic1 + (i64)X->a3 * v3) >> 15);
+                ic1 = 2 * v1 - ic1; ic2 = 2 * v2 - ic2;
+                y = X->mode == 0 ? v2 : X->mode == 1 ? v1 : nz - (int32_t)(((i64)X->k * v1) >> 16) - v2;
+                if (y > 98304) y = 98304;
+                if (y < -98304) y = -98304;
+                s += (y * n) >> 15;
             }
             if (drv) s = sat((int32_t)(((i64)s * drv) >> 12));
             s = (int32_t)(((i64)s * X->level) >> 15);
@@ -197,7 +217,7 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
             dly[i] += (int32_t)(((i64)s * dl) >> 15);
             a += as; n += ns;
         }
-        v->a = at; v->n = nt; v->lp = lp; v->m1 = m1; v->m2 = m2; v->cph = cph; v->mph = mph;
+        v->a = at; v->n = nt; v->ic1 = ic1; v->ic2 = ic2; v->m1 = m1; v->m2 = m2; v->cph = cph; v->mph = mph;
     }
 }
 

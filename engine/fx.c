@@ -6,7 +6,8 @@
  * ~76 KB of memory.
  * Delay: stereo at half the rate (22.05 kHz), up to 1.2 s; low-pass, high-pass and a soft drive in the loop,
  * ping-pong, a little wow, and the time glides when changed (as a tape's would). ~106 KB.
- * Both take mono sends; the reverb also takes some of the delay. */
+ * Both take mono sends; the reverb also takes some of the delay. Each sleeps once its input and its output have
+ * been silent long enough, and wakes on the next sound: nothing to pay while nothing plays. */
 
 #ifndef ENG_POOL
 #define ENG_POOL                                /* the FM-1 build puts the memory in its pool (micro/config.h) */
@@ -27,6 +28,7 @@
 #define RV_RD1 6249u
 #define RV_RA2 3936u
 #define RV_RD2 4687u
+#define FX_SLEEP 8192u                          /* samples of silence (~0.19 s) before an effect sleeps */
 #define DL_N 26464u                             /* the delay: 1.2 s at 22.05 kHz, per side */
 #define FX_MEM (RV_PRE + RV_I1 + RV_I2 + RV_I3 + RV_I4 + (RV_LM + 2u * RV_EXC + 4u) + RV_LD1 + RV_LA2 + RV_LD2 \
               + (RV_RM + 2u * RV_EXC + 4u) + RV_RD1 + RV_RA2 + RV_RD2 + 2u * DL_N)
@@ -55,7 +57,7 @@ static struct {
     int32_t fb, tone_g, lc_g, ping, wow, drive, dlevel, to_rev; int32_t dly_q8;   /* the delay's target, Q8 */
 } fxd;
 static struct {
-    int32_t bw, lpl, lpr; uint32_t lfo;
+    int32_t bw, lpl, lpr; uint32_t lfo, rquiet, dquiet;
     int32_t dq, lp[2], hp[2], prev[2]; uint32_t wph;
 } fxs;
 
@@ -145,25 +147,34 @@ static void fx_init(void)
     fx_derive();
     fxs.bw = fxs.lpl = fxs.lpr = 0; fxs.lfo = 0;
     fxs.dq = fxd.dly_q8; fxs.lp[0] = fxs.lp[1] = fxs.hp[0] = fxs.hp[1] = fxs.prev[0] = fxs.prev[1] = 0; fxs.wph = 0;
+    fxs.rquiet = fxs.dquiet = 0x10000000u;                         /* asleep until something plays */
     fxdirty = 0;
 }
 
-/* one block: rev and dly are the mono sends; the returns are added to out (L R). The sends are used up. */
-static void fx_run(int32_t *out, int32_t *rev, const int32_t *dly)
+static inline int32_t iabs(int32_t x) { return x < 0 ? -x : x; }
+
+/* one block: rev and dly are the mono sends; the returns are added to out (L R). */
+static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
 {
-    uint32_t i;
+    int32_t rin[ENG_BLOCK];                                              /* the reverb's input */
+    uint32_t i, any;
     if (fxdirty) { fxdirty = 0; fx_derive(); }
+    for (i = 0; i < ENG_BLOCK; i++) rin[i] = rev[i];
 
     /* the delay, at half rate: 8 steps per block */
-    {
+    for (any = 0, i = 0; i < ENG_BLOCK; i++) any |= (uint32_t)dly[i];
+    if (any) fxs.dquiet = 0;
+    if (fxs.dquiet <= FX_SLEEP / 2u + ((uint32_t)fxs.dq >> 8)) {
         int32_t fb = fxd.fb, ping = fxd.ping, nping = 32768 - fxd.ping, lvl = fxd.dlevel, tr = fxd.to_rev;
         int32_t wow = (((sine(fxs.wph) * (fxd.wow >> 1)) >> 14) * 6144) >> 15;   /* up to ±24 samples, Q8 */
+        uint32_t loud = 0;
         fxs.wph += 64000000u;                                              /* ~0.66 Hz */
         for (i = 0; i < ENG_BLOCK / 2u; i++) {
             int32_t x = clamp16((dly[2 * i] + dly[2 * i + 1]) >> 1), s[2], f[2], c;
             int32_t k = fxs.dq + wow;
             fxs.dq += (fxd.dly_q8 - fxs.dq) >> 9;                            /* the time glides */
             s[0] = dl_frac(&dl_l, k); s[1] = dl_frac(&dl_r, k);
+            loud |= (uint32_t)(iabs(s[0]) > 2) | (uint32_t)(iabs(s[1]) > 2);
             for (c = 0; c < 2; c++) {                                     /* the loop's filters and drive */
                 int32_t y = s[c];
                 fxs.lp[c] += (int32_t)(((i64)fxd.tone_g * (y - fxs.lp[c])) >> 16);
@@ -180,20 +191,24 @@ static void fx_run(int32_t *out, int32_t *rev, const int32_t *dly)
                 out[4 * i + 2 + c] += y1;
                 fxs.prev[c] = y1;
             }
-            if (tr) { int32_t m = (((s[0] + s[1]) >> 1) * tr) >> 15; rev[2 * i] += m; rev[2 * i + 1] += m; }
+            if (tr) { int32_t m = (((s[0] + s[1]) >> 1) * tr) >> 15; rin[2 * i] += m; rin[2 * i + 1] += m; }
         }
-    }
+        fxs.dquiet = loud || any ? 0u : fxs.dquiet + ENG_BLOCK / 2u;
+    } else fxs.prev[0] = fxs.prev[1] = 0;
 
     /* the plate */
-    {
+    for (any = 0, i = 0; i < ENG_BLOCK; i++) any |= (uint32_t)rin[i];
+    if (any) fxs.rquiet = 0;
+    if (fxs.rquiet <= FX_SLEEP + RV_PRE) {
         int32_t dec = fxd.decay, dd2 = fxd.dd2, damp = fxd.damp, ndamp = 32768 - fxd.damp, bwc = fxd.bwc, lvl = fxd.rlevel;
         int32_t ml, mr, base = (int32_t)RV_EXC << 8;
+        uint32_t loud = 0;
         ml = (int32_t)RV_LM * 256 + base + (int32_t)(((i64)((sine(fxs.lfo) * fxd.mod) >> 15) * base) >> 15);
         mr = (int32_t)RV_RM * 256 + base + (int32_t)(((i64)((sine(fxs.lfo + 0x40000000u) * fxd.mod) >> 15) * base) >> 15);
         fxs.lfo += 1090000u;                                               /* ~0.7 Hz */
         for (i = 0; i < ENG_BLOCK; i++) {
             int32_t x, l, r, lfb, rfb, ol, orr;
-            dl_push(&rv_pre, rev[i]);
+            dl_push(&rv_pre, rin[i]);
             x = dl_tap(&rv_pre, fxd.pre);
             fxs.bw += mulz(x - fxs.bw, bwc);
             x = ap(&rv_i[0], fxs.bw, 24576);
@@ -219,7 +234,9 @@ static void fx_run(int32_t *out, int32_t *rev, const int32_t *dly)
                 - dl_tap(&rv_rd1, 3128) - dl_tap(&rv_ra2, 496) - dl_tap(&rv_rd2, 179);
             out[2 * i] += (int32_t)(((i64)ol * lvl) >> 16);                /* x 0.5: seven taps add up */
             out[2 * i + 1] += (int32_t)(((i64)orr * lvl) >> 16);
+            loud |= (uint32_t)(iabs(ol) > 3) | (uint32_t)(iabs(orr) > 3);
         }
+        fxs.rquiet = loud || any ? 0u : fxs.rquiet + ENG_BLOCK;
     }
 }
 

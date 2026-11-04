@@ -79,4 +79,4 @@ P(VOLUME,      "volume",      13000, 16383, C)
 P(PAN,         "pan",          8192, 16383, B)
 /* effects */
 P(REV_SEND,    "rev_send",     3500, 16383, C)   /* to the reverb */
-P(DLY_SEND,    "dly_send",        0, 16383, C)   /* to the delay */
+P(DLY_SEND,    "dly_send",     2800, 16383, C)   /* to the delay */

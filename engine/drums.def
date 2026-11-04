@@ -8,7 +8,7 @@ D(FM,         "fm",         16383, C)   /* the index: 0 .. 4 pi */
 D(FM_DEC,     "fm_dec",     16383, C)
 D(FEEDBACK,   "feedback",   16383, C)   /* the modulator on itself: towards noise */
 D(NOISE,      "noise",      16383, C)
-D(NOISE_TONE, "noise_tone", 16383, B)   /* low-pass ← flat → high-pass */
+D(NOISE_CUT,  "noise_cut",  16383, C)   /* the noise filter: 100 Hz .. 16 kHz */
 D(NOISE_DEC,  "noise_dec",  16383, C)
 D(DECAY,      "decay",      16383, C)   /* the tone's decay */
 D(CLAP,       "clap",           3, E)   /* extra noise bursts, ~9 ms apart */
@@ -18,3 +18,7 @@ D(PAN,        "pan",        16383, B)
 D(REV,        "rev",        16383, C)   /* send to the reverb */
 D(DLY,        "dly",        16383, C)   /* send to the delay */
 D(CHOKE,      "choke",          2, E)   /* group: drums of the same group cut each other */
+D(NOISE_MODE, "noise_mode",     2, E)   /* the noise filter: low-pass, band-pass, high-pass */
+D(NOISE_RESO, "noise_reso", 16383, C)
+D(METAL,      "metal",      16383, C)   /* six square waves at the 808's ratios, from the tune: into the noise filter */
+D(TONE,       "tone",       16383, C)   /* the FM voice's level */

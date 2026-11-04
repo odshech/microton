@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* MICROTON 0.3 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
+/* MICROTON 0.4 for the M-VAVE FM-1: the microtonal engine (engine/, the same C as the browser lab) on Dinghy's platform.
  * A test firmware: it plays, and it measures. The screen shows the battery and the audio engine's CPU load.
  *
  *   white keys     the 16 degrees of the window; 3 sounds share 8 voices (part 1 on the keys)
@@ -10,7 +10,8 @@
  *   REC            the load test: 8 voices of the heaviest sound, held
  *   HOME           clears the peak load and the count of voices dropped for load (CUT n)
  *   KNOB 1..4      cutoff, resonance, envelope 1 release, drive (part 1)
- *   FX             the knobs switch to: reverb level, reverb size, delay level, delay feedback (FX lit)
+ *   FX             the knobs switch to: reverb level, reverb size, delay level, delay feedback (FX lit), PRESETS
+ *                  to the delay's time (free, 1/32 .. 1/2 of the tempo); the screen shows the values
  *   PRESETS        the scale          SELECT  the tempo
  *   MIDI in        notes on the white-key map (C4 = the window's first degree), bend, mod wheel, NRPN = parameters
  *
@@ -244,9 +245,33 @@ static void draw_wheel(void)
 
 static void draw_line(uint32_t y, const char *s, uint16_t c) { draw_text_box(0, (int32_t)y, 240, &FONT_S, s, c, 1); }
 
+/* the FX page: the effects' values where the scale's lines are */
+static char *putpct(char *p, uint32_t raw, uint32_t full) { p = putn(p, (raw * full + 8191u) / 16383u); *p++ = '%'; return p; }
+static void draw_fx(void)
+{
+    static const char *const SYNC[12] = {"", "1/32", "1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/4.", "1/2"};
+    char b[48], *p = b;
+    uint32_t sz = 20u + (eng_fx_get(FX_REV_SIZE) * 78u + 8191u) / 16383u, sy = eng_fx_get(FX_DLY_SYNC);
+    p = put(p, "REV "); p = putpct(p, eng_fx_get(FX_REV_LEVEL), 100u);
+    p = put(p, "  SIZE 0."); p = putn(p, sz);
+    *p = 0;
+    draw_line(150, b, M_AMB);
+    p = b;
+    p = put(p, "DLY "); p = putpct(p, eng_fx_get(FX_DLY_LEVEL), 100u);
+    p = put(p, "  FB "); p = putpct(p, eng_fx_get(FX_DLY_FB), 110u); p = put(p, "  ");
+    if (sy && sy < 12u) p = put(p, SYNC[sy]);
+    else {                                      /* free: 10 ms x 120^(r/16383), 2^x by a quadratic */
+        uint32_t x = (eng_fx_get(FX_DLY_TIME) * 452665u) / 16383u, ip = x >> 16, f = x & 0xFFFFu;
+        uint32_t m = 65536u + ((f * (43025u + ((22511u * f) >> 16))) >> 16);
+        p = putn(p, ((10u * m) << ip) >> 16); p = put(p, "MS");
+    }
+    *p = 0;
+    draw_line(170, b, M_TXT);
+}
 static void draw_scale(void)
 {
     char b[48], nm[20], *p = b;
+    if (fx_page) { draw_fx(); return; }
     p = put(p, scale_name(LIB_ORDER[scale_i], nm));
     *p = 0;
     draw_line(150, b, M_TXT);
@@ -333,14 +358,15 @@ static void midi_in(void)
 static void app_idle(void) { if (idle_ok) midi_in(); }
 
 /* the four knobs: detents step a parameter of part 1 */
-static void fxknob(uint32_t enc, uint32_t id, int32_t step)
+static int fxknob(uint32_t enc, uint32_t id, int32_t step)   /* 1 = turned */
 {
     int32_t e = fm1_enc_take(enc), v;
-    if (!e) return;
+    if (!e) return 0;
     v = (int32_t)eng_fx_get(id) + e * step;
     if (v < 0) v = 0;
     if (v > (int32_t)eng_fx_param_max(id)) v = (int32_t)eng_fx_param_max(id);
     eng_fx_set(id, (uint32_t)v);
+    return 1;
 }
 static void knob(uint32_t enc, uint32_t id, int32_t step)
 {
@@ -405,19 +431,21 @@ static void app_main(void)
         if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; }
 
         /* encoders */
-        if (b & (1u << BTN_FX)) fx_page = !fx_page;
-        if (fx_page) {                              /* FX: the reverb's and the delay's main controls */
-            fxknob(ENC_KNOB1, FX_REV_LEVEL, 200);
-            fxknob(ENC_KNOB2, FX_REV_SIZE, 200);
-            fxknob(ENC_KNOB3, FX_DLY_LEVEL, 200);
-            fxknob(ENC_KNOB4, FX_DLY_FB, 200);
+        if (b & (1u << BTN_FX)) { fx_page = !fx_page; scale_dirty = 1; }
+        if (fx_page) {                              /* FX: the reverb's and the delay's main controls, shown */
+            scale_dirty |= fxknob(ENC_KNOB1, FX_REV_LEVEL, 200) | fxknob(ENC_KNOB2, FX_REV_SIZE, 200)
+                         | fxknob(ENC_KNOB3, FX_DLY_LEVEL, 200) | fxknob(ENC_KNOB4, FX_DLY_FB, 200);
         } else {
             knob(ENC_KNOB1, P_CUTOFF, 160);
             knob(ENC_KNOB2, P_RESO, 160);
             knob(ENC_KNOB3, P_E1_R, 160);
             knob(ENC_KNOB4, P_DRIVE, 160);
         }
-        if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
+        if (fx_page && (e = fm1_enc_take(ENC_PRESETS)) != 0) {           /* FX: PRESETS sets the delay's time */
+            int32_t sy = (int32_t)eng_fx_get(FX_DLY_SYNC) + e;
+            eng_fx_set(FX_DLY_SYNC, (uint32_t)(sy < 0 ? 0 : sy > 11 ? 11 : sy));
+            scale_dirty = 1;
+        } else if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
             all_off();
             scale_i = (uint32_t)imod((int32_t)scale_i + e, (int32_t)sizeof LIB_ORDER);
             scale_load(); win = 0; scale_dirty = wheel_dirty = 1;

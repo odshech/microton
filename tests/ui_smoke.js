@@ -115,7 +115,7 @@ check('load', () => eval(fs.readFileSync(path.join(root, 'site/src/app.js'), 'ut
     for (const c of kids('steps').slice(0, 6)) { c.fire('click'); }
     kids('steps')[0].fire('click'); kids('steps')[1].fire('dblclick');
     kids('pages')[1].fire('click'); kids('pages')[0].fire('click');
-    for (const b of created.slice()) if (b.tag === 'button' && b._text && /העתקת|הדבקת|הזזה|היפוך|הכפלה|אוקלידי|אקראית|נעילה חדשה|שורה חדשה/.test(b._text)) b.fire('click');
+    for (const b of created.slice()) if (b.tag === 'button' && b._text && /Copy|Paste|Shift|Reverse|Double|Euclidean|Random melody|New lock|New row/.test(b._text)) b.fire('click');
     byId.get('stepRecBtn').fire('click');
     onWin.keydown.forEach(f => f({ code: 'KeyC', target: new El('div') })); onWin.keyup.forEach(f => f({ code: 'KeyC' }));
     byId.get('stepRecBtn').fire('click'); byId.get('recBtn').fire('click'); byId.get('recBtn').fire('click');
@@ -134,7 +134,7 @@ check('load', () => eval(fs.readFileSync(path.join(root, 'site/src/app.js'), 'ut
     byId.get('edoP').value = 'nonsense'; byId.get('edoBtn').fire('click');
   });
   const meta = byId.get('sMeta').textContent;
-  if (!/13 דרגות/.test(meta) || !/1901\.9/.test(meta)) { errors++; console.log('FAIL equal division shown as', meta); }
+  if (!/13 degrees/.test(meta) || !/1901\.9/.test(meta)) { errors++; console.log('FAIL equal division shown as', meta); }
   check('audio button', () => byId.get('audioBtn').fire('click'));
   await new Promise(r => setTimeout(r, 1700));                     /* the worklet stays silent: the fallback starts */
   if (process.env.WORKLET) {

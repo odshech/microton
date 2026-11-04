@@ -1,15 +1,15 @@
-<title>מיקרוטון · Microton</title>
+<title>Microton</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=Secular+One&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Secular+One&display=swap">
 <style>
 /* Layout: the instrument (wheel, 16 white keys, wheels) beside the sound editor, tabbed by section of the voice */
 :root {
   --bg: #eef1ee; --panel: #f8faf8; --ink: #18201d; --muted: #5a6762; --line: #ccd5d0;
   --accent: #2c7a69; --accent-soft: #d8ebe5; --brass: #a86f12; --brass-soft: #f4e5c8; --warn: #b23b2e; --ghost: #c3ccc7;
   --track: #dfe6e2;
-  --f-display: "Secular One", "IBM Plex Sans Hebrew", "Arial Hebrew", sans-serif;
-  --f-body: "IBM Plex Sans Hebrew", "Arial Hebrew", "Segoe UI", sans-serif;
+  --f-display: "Secular One", "IBM Plex Sans", "Segoe UI", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -179,16 +179,16 @@ td.moved { color: var(--brass); }
 
 <div class="wrap">
   <header>
-    <h1>מיקרוטון · Microton</h1>
+    <h1>Microton</h1>
     <div class="bar">
-      <button id="audioBtn" class="primary" type="button">הפעלת שמע</button>
-      <span class="pill"><i class="led" id="audioLed"></i><span id="audioState">השמע כבוי</span></span>
-      <label class="pill"><input id="stableBox" type="checkbox"> שמע יציב</label>
+      <button id="audioBtn" class="primary" type="button">Start audio</button>
+      <span class="pill"><i class="led" id="audioLed"></i><span id="audioState">Audio off</span></span>
+      <label class="pill"><input id="stableBox" type="checkbox"> Stable audio</label>
       <span class="pill"><i class="led" id="voiceLed"></i><span id="voiceState" class="mono">0/8</span></span>
-      <button id="midiBtn" type="button">חיבור מידי</button>
-      <select id="midiMap" aria-label="מיפוי מקלדת מידי">
-        <option value="white">מידי: לבנים בלבד, כמו במכשיר</option>
-        <option value="chrom">מידי: כל קליד דרגה</option>
+      <button id="midiBtn" type="button">Connect MIDI</button>
+      <select id="midiMap" aria-label="MIDI keyboard map">
+        <option value="white">MIDI: white keys only, as on the FM-1</option>
+        <option value="chrom">MIDI: every key a degree</option>
       </select>
       <span class="pill" id="midiState"></span>
     </div>
@@ -197,114 +197,114 @@ td.moved { color: var(--brass); }
   <div class="bench">
     <div class="col">
       <section class="panel" aria-labelledby="h-play">
-        <h2 id="h-play">נגינה</h2>
+        <h2 id="h-play">Play</h2>
         <div class="scalehead"><b id="sName"></b><span class="note" id="sMeta"></span></div>
         <div class="wheelrow">
-          <svg id="wheel" viewBox="0 0 400 400" role="img" aria-label="תצוגת עיגול של הסולם"></svg>
+          <svg id="wheel" viewBox="0 0 400 400" role="img" aria-label="The scale as a circle"></svg>
           <div class="wheels">
-            <label>כיפוף<input id="bend" type="range" min="-8192" max="8191" value="0" aria-label="כיפוף בדרגות"></label>
-            <label>מודולציה<input id="wheelIn" type="range" min="0" max="127" value="0" aria-label="גלגל מודולציה"></label>
+            <label>Bend<input id="bend" type="range" min="-8192" max="8191" value="0" aria-label="Bend, in degrees"></label>
+            <label>Mod<input id="wheelIn" type="range" min="0" max="127" value="0" aria-label="Mod wheel"></label>
           </div>
         </div>
         <div class="keybar">
           <div class="bar">
-            <button id="winDown" type="button" aria-label="הזזת החלון דרגה למטה">החלון ‹</button>
-            <button id="winUp" type="button" aria-label="הזזת החלון דרגה למעלה">› החלון</button>
-            <button id="perDown" type="button" aria-label="מחזור למטה">מחזור −</button>
-            <button id="perUp" type="button" aria-label="מחזור למעלה">מחזור +</button>
+            <button id="winDown" type="button" aria-label="Window one degree down">‹ Window</button>
+            <button id="winUp" type="button" aria-label="Window one degree up">Window ›</button>
+            <button id="perDown" type="button" aria-label="Period down">Period −</button>
+            <button id="perUp" type="button" aria-label="Period up">Period +</button>
           </div>
           <span class="note" id="winNote"></span>
         </div>
-        <div class="keys" id="keys" aria-label="16 הקלידים הלבנים"></div>
-        <p class="note">משמאל לימין כמו במכשיר; קו בתחתית מסמן תחילת מחזור. מקלדת המחשב: <code>Z X C V B N M</code> ואז <code>A S D F G H J K L</code>. הכיפוף חוזר למרכז כשעוזבים.</p>
+        <div class="keys" id="keys" aria-label="The 16 white keys"></div>
+        <p class="note">Left to right, as on the FM-1; a line at the bottom marks the start of a period. Computer keyboard: <code>Z X C V B N M</code>, then <code>A S D F G H J K L</code>. The bend springs back to the centre when let go.</p>
       </section>
 
       <section class="panel" aria-labelledby="h-scale">
-        <h2 id="h-scale">סולם</h2>
+        <h2 id="h-scale">Scale</h2>
         <div class="chooser">
-          <input id="q" type="search" placeholder="חיפוש סולם" aria-label="חיפוש סולם">
-          <select id="degFilter" aria-label="מספר דרגות"><option value="">כל מספרי הדרגות</option></select>
+          <input id="q" type="search" placeholder="Search scales" aria-label="Search scales">
+          <select id="degFilter" aria-label="Number of degrees"><option value="">Any number of degrees</option></select>
         </div>
         <ul class="list" id="list"></ul>
         <div class="bar">
-          <label class="btn">טעינת קבצי סולם או מיפוי<input id="pickFiles" type="file" multiple accept=".scl,.zip,.kbm"></label>
-          <button id="resetLib" type="button">חזרה לדוגמאות</button>
+          <label class="btn">Load scale or mapping files<input id="pickFiles" type="file" multiple accept=".scl,.zip,.kbm"></label>
+          <button id="resetLib" type="button">Back to the examples</button>
         </div>
         <p class="status" id="status" role="status"></p>
         <div class="tune">
-          <span class="note">מודוס</span>
-          <div class="bar"><button id="modeDown" type="button" aria-label="מודוס קודם">‹</button><b id="modeVal" class="mono">0</b><button id="modeUp" type="button" aria-label="מודוס הבא">›</button></div>
-          <label for="refDeg" class="note">דרגת ייחוס</label>
+          <span class="note">Mode</span>
+          <div class="bar"><button id="modeDown" type="button" aria-label="Previous mode">‹</button><b id="modeVal" class="mono">0</b><button id="modeUp" type="button" aria-label="Next mode">›</button></div>
+          <label for="refDeg" class="note">Reference degree</label>
           <input id="refDeg" type="number" min="-255" max="255" step="1" value="0" class="mono" style="width: 5em">
-          <label for="ref" class="note">בתדר, הרץ</label>
+          <label for="ref" class="note">at, Hz</label>
           <input id="ref" type="number" min="1" max="20000" step="0.01" value="261.63" class="mono" style="width: 7em">
         </div>
         <details id="edoBox">
-          <summary>חלוקה שווה של מחזור</summary>
+          <summary>Equal division of a period</summary>
           <div class="bar">
-            <label for="edoN" class="note">צעדים</label><input id="edoN" type="number" min="1" max="255" value="19" class="mono" style="width: 5em">
-            <label for="edoP" class="note">מחזור</label><input id="edoP" type="text" value="2/1" class="mono" style="width: 6em" dir="ltr">
-            <button id="edoBtn" type="button">יצירה</button>
+            <label for="edoN" class="note">Steps</label><input id="edoN" type="number" min="1" max="255" value="19" class="mono" style="width: 5em">
+            <label for="edoP" class="note">Period</label><input id="edoP" type="text" value="2/1" class="mono" style="width: 6em" dir="ltr">
+            <button id="edoBtn" type="button">Make</button>
           </div>
-          <p class="note">מחזור כיחס, למשל <code>3/1</code>, או בסנטים, למשל <code>1200</code>.</p>
+          <p class="note">The period as a ratio, such as <code>3/1</code>, or in cents, such as <code>1200</code>.</p>
         </details>
         <details id="fineBox">
-          <summary>כוונון עדין של דרגות</summary>
-          <div class="tablebox"><table><thead><tr><th>דרגה</th><th>סנטים</th><th>הזזה בסנטים</th></tr></thead><tbody id="fineBody"></tbody></table></div>
-          <button id="fineClear" type="button">איפוס הכוונון העדין</button>
+          <summary>Fine-tune degrees</summary>
+          <div class="tablebox"><table><thead><tr><th>Degree</th><th>Cents</th><th>Offset, cents</th></tr></thead><tbody id="fineBody"></tbody></table></div>
+          <button id="fineClear" type="button">Clear the fine tuning</button>
         </details>
       </section>
     </div>
 
     <section class="panel" aria-labelledby="h-sound">
       <div class="bar" style="justify-content: space-between">
-        <h2 id="h-sound">צליל</h2>
-        <div class="bar" id="partTabs" role="group" aria-label="איזה צליל">
-          <button type="button" aria-pressed="true">צליל 1</button><button type="button" aria-pressed="false">צליל 2</button><button type="button" aria-pressed="false">צליל 3</button>
+        <h2 id="h-sound">Sound</h2>
+        <div class="bar" id="partTabs" role="group" aria-label="Which sound">
+          <button type="button" aria-pressed="true">Sound 1</button><button type="button" aria-pressed="false">Sound 2</button><button type="button" aria-pressed="false">Sound 3</button>
         </div>
         <div class="bar">
-          <button id="resetBtn" type="button">צליל ברירת מחדל</button>
+          <button id="resetBtn" type="button">Default sound</button>
         </div>
       </div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div id="tabBody"></div>
-      <p class="note">לחיצה כפולה על מחוון מחזירה אותו לברירת המחדל. כל פרמטר מקבל גם הודעת מידי לפי המספר שלו ברשימה.</p>
+      <p class="note">Double-click a slider to reset it. Every parameter also takes a MIDI NRPN, by its number in the list.</p>
     </section>
 
     <section class="panel" aria-labelledby="h-kit">
       <div class="bar" style="justify-content: space-between">
-        <h2 id="h-kit">תופים ואפקטים</h2>
+        <h2 id="h-kit">Drums and effects</h2>
         <div class="tabs" role="tablist" id="kitTabs" style="border: 0; padding: 0"></div>
-        <button id="kitResetBtn" type="button">ברירת מחדל</button>
+        <button id="kitResetBtn" type="button">Default</button>
       </div>
-      <div class="pads" id="pads" role="group" aria-label="שמונת התופים: לחיצה מנגנת ובוחרת לעריכה"></div>
+      <div class="pads" id="pads" role="group" aria-label="The eight drums: a press plays one and selects it for editing"></div>
       <div id="kitBody"></div>
     </section>
   </div>
 
   <section class="panel" aria-labelledby="h-seq">
     <div class="bar" style="justify-content: space-between">
-      <h2 id="h-seq">סיקוונסר</h2>
+      <h2 id="h-seq">Sequencer</h2>
       <div class="bar">
-        <button id="playBtn" class="primary" type="button">ניגון</button>
-        <label class="note" for="tempo">טמפו</label>
+        <button id="playBtn" class="primary" type="button">Play</button>
+        <label class="note" for="tempo">Tempo</label>
         <input id="tempo" type="number" min="30" max="300" step="0.1" value="120" class="mono" style="width: 5.5em">
-        <button id="songBtn" type="button" aria-pressed="false">מצב שיר</button>
-        <button id="recBtn" type="button" aria-pressed="false">הקלטה חיה</button>
-        <button id="stepRecBtn" type="button" aria-pressed="false">כתיבת צעדים</button>
-        <button id="undoBtn" type="button">ביטול פעולה</button>
+        <button id="songBtn" type="button" aria-pressed="false">Song mode</button>
+        <button id="recBtn" type="button" aria-pressed="false">Live record</button>
+        <button id="stepRecBtn" type="button" aria-pressed="false">Step record</button>
+        <button id="undoBtn" type="button">Undo</button>
       </div>
     </div>
     <div>
-      <span class="note">פטרן</span>
-      <div class="patterns" id="patterns" role="group" aria-label="פטרנים"></div>
+      <span class="note">Pattern</span>
+      <div class="patterns" id="patterns" role="group" aria-label="Patterns"></div>
     </div>
-    <div class="tracks" id="tracks" role="group" aria-label="רצועות"></div>
+    <div class="tracks" id="tracks" role="group" aria-label="Tracks"></div>
     <div class="bar" style="justify-content: space-between">
-      <div class="bar" id="pages" role="group" aria-label="עמוד צעדים"></div>
+      <div class="bar" id="pages" role="group" aria-label="Step page"></div>
       <span class="note" id="seqNote"></span>
     </div>
-    <div class="steps" id="steps" aria-label="16 הצעדים של העמוד"></div>
+    <div class="steps" id="steps" aria-label="The page's 16 steps"></div>
     <div class="seqcols">
       <div class="group" id="stepEd"></div>
       <div class="group" id="trackEd"></div>

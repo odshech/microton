@@ -21,7 +21,7 @@ scripts = '\n'.join([
 body = page + '\n' + scripts + '\n'
 os.makedirs(os.path.join(root, 'dist'), exist_ok=True)
 open(os.path.join(root, 'dist', 'microton.artifact.html'), 'w', encoding='utf-8').write(body)
-doc = ('<!doctype html>\n<html lang="he" dir="rtl">\n<head>\n<meta charset="utf-8">\n'
+doc = ('<!doctype html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n'
        '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n</head>\n<body>\n'
        + body + '</body>\n</html>\n')
 open(os.path.join(root, 'dist', 'microton.html'), 'w', encoding='utf-8').write(doc)

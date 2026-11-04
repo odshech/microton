@@ -25,15 +25,15 @@
   /* one pitch line → cents. Scala: a '.' means cents, otherwise a ratio a/b or a whole number a. */
   function pitchToCents(line, lineNo) {
     const tok = line.trim().split(/\s+/)[0];
-    if (!tok) throw new SclError(`שורה ${lineNo}: ערך ריק`);
+    if (!tok) throw new SclError(`line ${lineNo}: empty value`);
     if (tok.includes('.')) {
-      if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) throw new SclError(`שורה ${lineNo}: ערך סנטים לא תקין`);
+      if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) throw new SclError(`line ${lineNo}: bad cents value`);
       return parseFloat(tok);
     }
     const m = /^(\d+)(?:\/(\d+))?$/.exec(tok);
-    if (!m) throw new SclError(`שורה ${lineNo}: יחס לא תקין`);
+    if (!m) throw new SclError(`line ${lineNo}: bad ratio`);
     const a = Number(m[1]), b = m[2] === undefined ? 1 : Number(m[2]);
-    if (!(a > 0) || !(b > 0)) throw new SclError(`שורה ${lineNo}: יחס חייב להיות חיובי`);
+    if (!(a > 0) || !(b > 0)) throw new SclError(`line ${lineNo}: a ratio must be positive`);
     return 1200 * Math.log2(a / b);
   }
 
@@ -49,16 +49,16 @@
       return null;
     };
     const description = next();
-    if (description === null) throw new SclError('הקובץ ריק');
+    if (description === null) throw new SclError('the file is empty');
     const countLine = next();
-    if (countLine === null) throw new SclError('חסר מספר הדרגות');
+    if (countLine === null) throw new SclError('the number of degrees is missing');
     const count = Number(countLine.trim().split(/\s+/)[0]);
-    if (!Number.isInteger(count) || count < 1) throw new SclError(`שורה ${lineNo}: מספר דרגות לא תקין`);
-    if (count > MAX_DEGREES) throw new SclError(`${count} דרגות: המקסימום הוא ${MAX_DEGREES}`);
+    if (!Number.isInteger(count) || count < 1) throw new SclError(`line ${lineNo}: bad number of degrees`);
+    if (count > MAX_DEGREES) throw new SclError(`${count} degrees: the most is ${MAX_DEGREES}`);
     const cents = [];
     for (let k = 0; k < count; k++) {
       const l = next();
-      if (l === null) throw new SclError(`חסרות דרגות: נמצאו ${k} מתוך ${count}`);
+      if (l === null) throw new SclError(`degrees missing: found ${k} of ${count}`);
       cents.push(pitchToCents(l, lineNo));
     }
     return { description: description.trim(), cents };
@@ -67,15 +67,15 @@
   /* a parsed scale → { type, unit, values, period } as stored */
   function classify(cents) {
     const n = cents.length, period = cents[n - 1];
-    if (cents.some(c => c < 0)) throw new SclError('דרגה מתחת ל־0 סנט אינה נתמכת');
-    if (!(period > 0)) throw new SclError('המחזור חייב להיות גדול מ־0');
+    if (cents.some(c => c < 0)) throw new SclError('a degree below 0 cents is not supported');
+    if (!(period > 0)) throw new SclError('the period must be above 0');
     const equal = cents.every((c, k) => Math.abs(c - period * (k + 1) / n) <= EQUAL_TOL);
     const max = Math.max(...cents);
     let type;
     if (equal && period * 16 <= 0xffff) type = T_EQUAL;
     else if (max * 16 <= 0xffff) type = T_TABLE16;
     else if (max * 4 <= 0xffff) type = T_TABLE4;
-    else throw new SclError(`דרגה של ${max.toFixed(1)} סנט: מעבר לטווח של 16383 סנט`);
+    else throw new SclError(`a degree of ${max.toFixed(1)} cents: beyond the 16383-cent range`);
     const unit = UNIT[type];
     const values = type === T_EQUAL ? [] : cents.map(c => Math.round(c * unit));
     return { type, unit, values, period: Math.round(period * unit) };
@@ -105,7 +105,7 @@
         errors.push({ file: f.name, message: e.message });
       }
     }
-    if (scales.length > 0xffff) throw new SclError('יותר מ־65535 סולמות');
+    if (scales.length > 0xffff) throw new SclError('more than 65535 scales');
     scales.sort((a, b) => a.degrees - b.degrees || a.period / a.unit - b.period / b.unit || a.name.localeCompare(b.name));
 
     const recSize = s => 1 + s.name.length + (s.type === T_EQUAL ? 0 : 2 * s.degrees);
@@ -127,7 +127,7 @@
   /* the device's view: bytes → [{ name, degrees, type, cents: [...] }] */
   function decodeLibrary(bytes) {
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    for (let k = 0; k < 4; k++) if (bytes[k] !== MAGIC[k]) throw new SclError('לא קובץ ספרייה');
+    for (let k = 0; k < 4; k++) if (bytes[k] !== MAGIC[k]) throw new SclError('not a library file');
     const count = dv.getUint16(4, true), out = [];
     for (let k = 0; k < count; k++) {
       const ix = HEADER + INDEX_ENTRY * k;

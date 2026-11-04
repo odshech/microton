@@ -37,8 +37,8 @@
     await ctx.audioWorklet.addModule(url);
     const n = new AudioWorkletNode(ctx, 'fm1-engine', { numberOfInputs: 0, outputChannelCount: [2], processorOptions: { wasm: bytes } });
     await new Promise((ok, no) => {
-      const t = setTimeout(() => no(new Error('לא התקבלה תשובה ממעבד השמע')), 1500);
-      n.onprocessorerror = () => { clearTimeout(t); no(new Error('מעבד השמע נכשל')); };
+      const t = setTimeout(() => no(new Error('no answer from the audio processor')), 1500);
+      n.onprocessorerror = () => { clearTimeout(t); no(new Error('the audio processor failed')); };
       n.port.onmessage = e => {
         if (e.data.t === 'ready') { clearTimeout(t); n.port.onmessage = ev => fromEngine(ev.data); ok(); }
         else if (e.data.t === 'fail') { clearTimeout(t); no(new Error(e.data.msg)); }
@@ -51,7 +51,7 @@
     if (node) { if (ctx.state === 'suspended') ctx.resume(); return Promise.resolve(); }
     if (starting) return starting;
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) { audioFail('הדפדפן הזה לא תומך בשמע מהדף.'); return Promise.resolve(); }
+    if (!AC) { audioFail('This browser cannot play audio from a page.'); return Promise.resolve(); }
     try { ctx = new AC({ sampleRate: 44100, latencyHint: stable ? 'playback' : 'interactive' }); } catch (e) { ctx = new AC(); }
     ctx.resume();                                   /* inside the tap itself: Safari needs this */
     rate = ctx.sampleRate;
@@ -59,12 +59,12 @@
       const bytes = b64bytes(window.FM1_WASM_B64);
       let why = '';
       try {
-        if (!ctx.audioWorklet) throw new Error('אין מעבד שמע ברקע בדפדפן הזה');
-        node = await workletNode(bytes); mode = 'מעבד ברקע';
+        if (!ctx.audioWorklet) throw new Error('no AudioWorklet in this browser');
+        node = await workletNode(bytes); mode = 'AudioWorklet';
       } catch (err) {
         why = err && err.message || String(err);
-        try { node = mainThreadNode(bytes); mode = 'מצב גיבוי'; }
-        catch (err2) { audioFail(`השמע לא עלה: ${why}; ${err2 && err2.message || err2}`); node = null; starting = null; return; }
+        try { node = mainThreadNode(bytes); mode = 'fallback mode'; }
+        catch (err2) { audioFail(`Audio did not start: ${why}; ${err2 && err2.message || err2}`); node = null; starting = null; return; }
       }
       pending.length = 0;                             /* the full state follows: nothing old to replay */
       vals.forEach((v, pt) => PARAMS.forEach(p => node.port.postMessage({ t: 'p', part: pt, id: p.id, v: v[p.id] })));
@@ -97,18 +97,18 @@
     if (!ctx || !node) return;
     const ok = ctx.state === 'running';
     $('audioLed').className = 'led ' + (ok ? 'on' : 'warn');
-    const lat = ctx.baseLatency || ctx.outputLatency ? ` · השהיה ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} אלפיות` : '';
+    const lat = ctx.baseLatency || ctx.outputLatency ? ` · latency ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} ms` : '';
     $('audioState').textContent = ok
-      ? `השמע פעיל · ${mode} · ${rate / 1000} קילוהרץ` + (rate !== 44100 ? ' · גובה מתוקן' : '') + lat
-      : 'השמע מושהה. לחצו על "הפעלת שמע".';
-    $('audioBtn').textContent = ok ? 'השתקת הכול' : 'הפעלת שמע';
+      ? `Audio on · ${mode} · ${rate / 1000} kHz` + (rate !== 44100 ? ' · pitch corrected' : '') + lat
+      : 'Audio paused. Press "Start audio".';
+    $('audioBtn').textContent = ok ? 'Silence all' : 'Start audio';
   }
   setInterval(showAudio, 1000);
   function fromEngine(m) {
     if (m.t === 'v' || m.t === 'midi' || m.t === 'scalereq') fromSeq(m);
     if (m.t === 'v') { $('voiceState').textContent = `${m.n}/8`; $('voiceLed').className = 'led' + (m.n ? ' on' : ''); }
-    else if (m.t === 'scale' && !m.ok) setStatus('הסולם לא נטען למנוע.', true);
-    else if (m.t === 'err') setStatus('הספרייה גדולה מהמקום שבמנוע.', true);
+    else if (m.t === 'scale' && !m.ok) setStatus('The scale did not load into the engine.', true);
+    else if (m.t === 'err') setStatus('The library is bigger than the engine\'s space.', true);
   }
   $('audioBtn').addEventListener('click', () => {
     if (node && ctx.state === 'running') { releaseAll(); return; }
@@ -121,66 +121,66 @@
   const BIP = r => { const v = Math.round((r - 8192) / 81.92); return `${v > 0 ? '+' : ''}${v}%`; };
   const HZ = f => f >= 1000 ? `${(f / 1000).toFixed(2)} kHz` : `${f.toFixed(f < 100 ? 1 : 0)} Hz`;
   const F0 = 440 * Math.pow(2, -69 / 12);
-  const WAVES = ['סינוס', 'משולש', 'מסור', 'פולס'];
+  const WAVES = ['sine', 'triangle', 'saw', 'pulse'];
   const WAVE = r => { const p = r * 3 / 16383, s = Math.min(2, Math.floor(p)), f = p - s;
     if (f < 0.02) return WAVES[s]; if (f > 0.98) return WAVES[s + 1]; return `${WAVES[s]}→${WAVES[s + 1]} ${Math.round(f * 100)}%`; };
   const DEG = r => { const v = r - 24; return `${v > 0 ? '+' : ''}${v}`; };
   const OCT = n => r => { const v = (r - 8192) / 8192 * n; return `${v > 0 ? '+' : ''}${v.toFixed(2)} oct`; };
   const LFOHZ = r => HZ(0.02 * Math.pow(2000, r / 16383));
-  const OFF_OR = f => r => r === 0 ? 'ללא' : f(r);
-  const SRC = ['ללא', 'מתנד נמוך 1', 'מתנד נמוך 2', 'מעטפת 3', 'מעטפת מסנן', 'עוצמת לחיצה', 'גובה הצליל', 'גלגל מודולציה', 'לחץ אחרי', 'אקראי לכל צליל', 'מתנד נמוך 1 × גלגל'];
-  const DST = ['ללא', 'גובה', 'גובה מתנד 2', 'רוחב פולס 1', 'רוחב פולס 2', 'צורת גל 1', 'צורת גל 2', 'חיתוך המסנן', 'רזוננס', 'עוצמה', 'פאן', 'קצב מתנד נמוך 1', 'קצב מתנד נמוך 2', 'רעש', 'עוצמת מתנד 2', 'דרייב'];
-  const SHAPES = ['משולש', 'סינוס', 'מסור', 'ריבוע', 'דגימה והחזקה'];
+  const OFF_OR = f => r => r === 0 ? 'off' : f(r);
+  const SRC = ['none', 'LFO 1', 'LFO 2', 'envelope 3', 'filter envelope', 'velocity', 'pitch', 'mod wheel', 'aftertouch', 'random per note', 'LFO 1 × wheel'];
+  const DST = ['none', 'pitch', 'osc 2 pitch', 'pulse width 1', 'pulse width 2', 'wave 1', 'wave 2', 'cutoff', 'resonance', 'level', 'pan', 'LFO 1 rate', 'LFO 2 rate', 'noise', 'osc 2 level', 'drive'];
+  const SHAPES = ['triangle', 'sine', 'saw', 'square', 'sample & hold'];
 
   const L = {};   /* key → [label, format or options] */
   for (const o of [1, 2]) {
-    L[`o${o}_wave`] = ['צורת גל', WAVE];
-    L[`o${o}_pw`] = ['רוחב פולס', r => `${Math.round(2 + 96 * r / 16383)}%`];
-    L[`o${o}_level`] = ['עוצמה', PCT];
-    L[`o${o}_deg`] = ['הזזה בדרגות', DEG];
+    L[`o${o}_wave`] = ['Wave', WAVE];
+    L[`o${o}_pw`] = ['Pulse width', r => `${Math.round(2 + 96 * r / 16383)}%`];
+    L[`o${o}_level`] = ['Level', PCT];
+    L[`o${o}_deg`] = ['Degrees offset', DEG];
   }
   Object.assign(L, {
-    o2_cents: ['כוונון עדין', r => { const v = (r - 8192) * 100 / 8192; return `${v > 0 ? '+' : ''}${v.toFixed(1)} ¢`; }],
-    o2_sync: ['סנכרון קשיח', ['כבוי', 'פעיל']],
-    sub_level: ['תת מתנד', PCT], noise_level: ['רעש', PCT], ring_level: ['אפנון טבעתי', PCT],
-    drive: ['דרייב', r => `×${(1 + 7 * r / 16383).toFixed(2)}`],
-    flt_mode: ['סוג', ['נמוכים 24', 'נמוכים 12', 'פס 12', 'גבוהים 12']],
-    cutoff: ['חיתוך', r => HZ(F0 * Math.pow(2, (r * 13700 / 16383) / 1200))],
-    reso: ['רזוננס', PCT], flt_keytrk: ['עקיבה אחרי הגובה', PCT],
-    flt_env: ['מעטפת מסנן', OCT(8)], flt_vel: ['עוצמת לחיצה', OCT(4)],
-    hpf: ['מסנן גבוהים', OFF_OR(r => HZ(F0 * Math.pow(2, (1548 + r * 7976 / 16383) / 1200)))],
-    voice_mode: ['מצב', ['פוליפוני, 8 קולות', 'מונופוני', 'יוניסון']],
-    uni_voices: ['קולות ביוניסון', ['2', '3', '4']],
-    uni_detune: ['פיזור כוונון', r => `${(r * 50 / 16383).toFixed(1)} ¢`], uni_spread: ['פיזור סטריאו', PCT],
-    glide: ['החלקה', OFF_OR(T)], bend_range: ['טווח כיפוף', ['דרגה 1', '2 דרגות', '3 דרגות', '4 דרגות']],
-    vel_amp: ['רגישות ללחיצה', PCT],
-    drift: ['סחיפת כוונון', r => `${(r * 10 / 16383).toFixed(1)} ¢`], variance: ['שוני בין קולות', PCT],
-    out_sat: ['רוויית יציאה', PCT], volume: ['עוצמה כללית', PCT],
-    rev_send: ['שליחה לריברב', PCT], dly_send: ['שליחה לדיליי', PCT],
-    pan: ['פאן', r => r === 8192 ? 'מרכז' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`],
+    o2_cents: ['Fine tune', r => { const v = (r - 8192) * 100 / 8192; return `${v > 0 ? '+' : ''}${v.toFixed(1)} ¢`; }],
+    o2_sync: ['Hard sync', ['off', 'on']],
+    sub_level: ['Sub oscillator', PCT], noise_level: ['Noise', PCT], ring_level: ['Ring mod', PCT],
+    drive: ['Drive', r => `×${(1 + 7 * r / 16383).toFixed(2)}`],
+    flt_mode: ['Type', ['low-pass 24', 'low-pass 12', 'band-pass 12', 'high-pass 12']],
+    cutoff: ['Cutoff', r => HZ(F0 * Math.pow(2, (r * 13700 / 16383) / 1200))],
+    reso: ['Resonance', PCT], flt_keytrk: ['Key tracking', PCT],
+    flt_env: ['Envelope amount', OCT(8)], flt_vel: ['Velocity', OCT(4)],
+    hpf: ['High-pass', OFF_OR(r => HZ(F0 * Math.pow(2, (1548 + r * 7976 / 16383) / 1200)))],
+    voice_mode: ['Mode', ['poly, 8 voices', 'mono', 'unison']],
+    uni_voices: ['Unison voices', ['2', '3', '4']],
+    uni_detune: ['Unison detune', r => `${(r * 50 / 16383).toFixed(1)} ¢`], uni_spread: ['Stereo spread', PCT],
+    glide: ['Glide', OFF_OR(T)], bend_range: ['Bend range', ['1 degree', '2 degrees', '3 degrees', '4 degrees']],
+    vel_amp: ['Velocity to level', PCT],
+    drift: ['Pitch drift', r => `${(r * 10 / 16383).toFixed(1)} ¢`], variance: ['Voice variance', PCT],
+    out_sat: ['Output saturation', PCT], volume: ['Volume', PCT],
+    rev_send: ['Reverb send', PCT], dly_send: ['Delay send', PCT],
+    pan: ['Pan', r => r === 8192 ? 'centre' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`],
   });
   for (const e of [1, 2, 3]) {
-    L[`e${e}_a`] = ['התקפה', T]; L[`e${e}_d`] = ['דעיכה', T]; L[`e${e}_s`] = ['החזקה', PCT];
-    L[`e${e}_r`] = ['שחרור', T]; L[`e${e}_curve`] = ['עקומה', r => r === 0 ? 'אקספוננציאלית' : PCT(r)];
+    L[`e${e}_a`] = ['Attack', T]; L[`e${e}_d`] = ['Decay', T]; L[`e${e}_s`] = ['Sustain', PCT];
+    L[`e${e}_r`] = ['Release', T]; L[`e${e}_curve`] = ['Curve', r => r === 0 ? 'exponential' : PCT(r)];
   }
   for (const l of [1, 2]) {
-    L[`l${l}_shape`] = ['צורה', SHAPES]; L[`l${l}_rate`] = ['קצב', LFOHZ];
-    L[`l${l}_delay`] = ['השהיה', OFF_OR(T)]; L[`l${l}_global`] = ['פעולה', ['לכל קול', 'משותף']];
+    L[`l${l}_shape`] = ['Shape', SHAPES]; L[`l${l}_rate`] = ['Rate', LFOHZ];
+    L[`l${l}_delay`] = ['Delay', OFF_OR(T)]; L[`l${l}_global`] = ['Runs', ['per voice', 'shared']];
   }
 
   const TABS = [
-    ['מתנדים', [['מתנד 1', ['o1_wave', 'o1_pw', 'o1_level', 'o1_deg']],
-                ['מתנד 2', ['o2_wave', 'o2_pw', 'o2_level', 'o2_deg', 'o2_cents', 'o2_sync']],
-                ['מקורות נוספים', ['sub_level', 'noise_level', 'ring_level', 'drive']]]],
-    ['מסנן', [['מסנן', ['flt_mode', 'cutoff', 'reso', 'flt_keytrk', 'flt_env', 'flt_vel', 'hpf']]]],
-    ['מעטפות', [['מעטפת 1: עוצמה', ['e1_a', 'e1_d', 'e1_s', 'e1_r', 'e1_curve']],
-                ['מעטפת 2: מסנן', ['e2_a', 'e2_d', 'e2_s', 'e2_r', 'e2_curve']],
-                ['מעטפת 3: חופשית', ['e3_a', 'e3_d', 'e3_s', 'e3_r', 'e3_curve']]]],
-    ['מתנדים נמוכים', [['מתנד נמוך 1', ['l1_shape', 'l1_rate', 'l1_delay', 'l1_global']],
-                       ['מתנד נמוך 2', ['l2_shape', 'l2_rate', 'l2_delay', 'l2_global']]]],
-    ['מודולציה', 'mod'],
-    ['קול ואופי', [['קול', ['voice_mode', 'uni_voices', 'uni_detune', 'uni_spread', 'glide', 'bend_range', 'vel_amp']],
-                   ['אופי אנלוגי', ['drift', 'variance', 'out_sat']], ['יציאה', ['volume', 'pan', 'rev_send', 'dly_send']]]],
+    ['Oscillators', [['Oscillator 1', ['o1_wave', 'o1_pw', 'o1_level', 'o1_deg']],
+                ['Oscillator 2', ['o2_wave', 'o2_pw', 'o2_level', 'o2_deg', 'o2_cents', 'o2_sync']],
+                ['More sources', ['sub_level', 'noise_level', 'ring_level', 'drive']]]],
+    ['Filter', [['Filter', ['flt_mode', 'cutoff', 'reso', 'flt_keytrk', 'flt_env', 'flt_vel', 'hpf']]]],
+    ['Envelopes', [['Envelope 1: level', ['e1_a', 'e1_d', 'e1_s', 'e1_r', 'e1_curve']],
+                ['Envelope 2: filter', ['e2_a', 'e2_d', 'e2_s', 'e2_r', 'e2_curve']],
+                ['Envelope 3: free', ['e3_a', 'e3_d', 'e3_s', 'e3_r', 'e3_curve']]]],
+    ['LFOs', [['LFO 1', ['l1_shape', 'l1_rate', 'l1_delay', 'l1_global']],
+                       ['LFO 2', ['l2_shape', 'l2_rate', 'l2_delay', 'l2_global']]]],
+    ['Modulation', 'mod'],
+    ['Voice', [['Voice', ['voice_mode', 'uni_voices', 'uni_detune', 'uni_spread', 'glide', 'bend_range', 'vel_amp']],
+                   ['Analog character', ['drift', 'variance', 'out_sat']], ['Output', ['volume', 'pan', 'rev_send', 'dly_send']]]],
   ];
 
   /* ================================================================== parameter values: saved per browser */
@@ -248,18 +248,18 @@
   function modTab() {
     const box = document.createElement('div'); box.className = 'group';
     const hint = document.createElement('p'); hint.className = 'note';
-    hint.textContent = 'שמונה חיבורים: מקור, יעד וכמות. הכמות רגישה יותר ליד האפס, לוויברטו עדין.';
+    hint.textContent = 'Eight routings: source, destination and amount. The amount is finer near zero, for gentle vibrato.';
     box.append(hint);
     for (let k = 1; k <= 8; k++) {
       const src = byKey[`m${k}_src`], dst = byKey[`m${k}_dst`], amt = byKey[`m${k}_amt`];
       const row = document.createElement('div'); row.className = 'modrow';
       const n = document.createElement('span'); n.className = 'n'; n.textContent = k;
       const mk = (p, opts) => { const s = document.createElement('select'); s.id = 'p-' + p.key; opts.forEach((o, i) => s.add(new Option(o, String(i)))); s.value = values[p.id];
-        s.setAttribute('aria-label', `חיבור ${k}: ${p === src ? 'מקור' : 'יעד'}`); s.addEventListener('change', () => setParam(p.id, +s.value, true)); inputs.set(p.id, { el: s, val: null, row: null }); return s; };
+        s.setAttribute('aria-label', `Routing ${k}: ${p === src ? 'source' : 'destination'}`); s.addEventListener('change', () => setParam(p.id, +s.value, true)); inputs.set(p.id, { el: s, val: null, row: null }); return s; };
       row.append(n, mk(src, SRC), mk(dst, DST));
       const ar = document.createElement('div'); ar.className = 'modamt';
       const r = document.createElement('input'); r.type = 'range'; r.min = 0; r.max = 16383; r.value = values[amt.id]; r.id = 'p-' + amt.key;
-      r.setAttribute('aria-label', `חיבור ${k}: כמות`);
+      r.setAttribute('aria-label', `Routing ${k}: amount`);
       r.addEventListener('input', () => setParam(amt.id, +r.value, true)); r.addEventListener('dblclick', () => setParam(amt.id, 8192));
       const v = document.createElement('span'); v.className = 'val';
       ar.append(r, v); inputs.set(amt.id, { el: r, val: v, row: null });
@@ -292,35 +292,36 @@
   const playPart = () => part;
 
   /* ================================================================== drums and effects */
-  const DRUM_NAMES = ['בס', 'סנר', 'האט סגור', 'האט פתוח', 'מחיאה', 'טום נמוך', 'טום גבוה', 'רים'];
+  const DRUM_NAMES = ['Kick', 'Snare', 'Closed hat', 'Open hat', 'Clap', 'Low tom', 'High tom', 'Rim'];
   const HZC = c => HZ(F0 * Math.pow(2, c / 1200));
-  const PANF = r => r === 8192 ? 'מרכז' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`;
+  const PANF = r => r === 8192 ? 'centre' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`;
   const DL = {
-    tune: ['כוונון', r => HZC(1548 + r * 9600 / 16383)],
-    pitch_amt: ['גלישת גובה (חצאי טון)', r => r ? `+${(r * 48 / 16383).toFixed(1)}` : 'ללא'],
-    pitch_dec: ['זמן הגלישה', T], decay: ['דעיכה', T],
-    ratio: ['יחס המאפנן', ['0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '7', '1.41', '2.76', '3.14', '5.19', '7.13', '14']],
-    fm: ['עומק אפנון', PCT], fm_dec: ['דעיכת האפנון', T], feedback: ['משוב', PCT],
-    noise: ['רעש', PCT], noise_dec: ['דעיכת הרעש', T],
-    noise_tone: ['גוון הרעש', r => { const t = r - 8192; if (Math.abs(t) < 200) return 'שטוח';
-      return t > 0 ? `HP ${HZC(1548 + t * 9200 / 8191)}` : `LP ${HZC(13700 + t * 9500 / 8192)}`; }],
-    clap: ['פרצי מחיאה', ['ללא', '1', '2', '3']],
-    drive: ['דרייב', OFF_OR(r => `×${(1 + 7 * r / 16383).toFixed(2)}`)], level: ['עוצמה', PCT], pan: ['פאן', PANF],
-    rev: ['שליחה לריברב', PCT], dly: ['שליחה לדיליי', PCT], choke: ['קבוצת חיתוך', ['ללא', 'קבוצה 1', 'קבוצה 2']],
+    tune: ['Tune', r => HZC(1548 + r * 9600 / 16383)],
+    pitch_amt: ['Pitch sweep', r => r ? `+${(r * 48 / 16383).toFixed(1)} st` : 'off'],
+    pitch_dec: ['Sweep time', T], decay: ['Decay', T],
+    ratio: ['FM ratio', ['0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '7', '1.41', '2.76', '3.14', '5.19', '7.13', '14']],
+    fm: ['FM amount', PCT], fm_dec: ['FM decay', T], feedback: ['Feedback', PCT],
+    noise: ['Noise', PCT], noise_dec: ['Noise decay', T],
+    noise_cut: ['Filter cutoff', r => HZC(4335 + r * 8795 / 16383)],
+    noise_mode: ['Filter type', ['low-pass', 'band-pass', 'high-pass']], noise_reso: ['Resonance', PCT],
+    metal: ['Metal', PCT], tone: ['Tone level', PCT],
+    clap: ['Clap bursts', ['none', '1', '2', '3']],
+    drive: ['Drive', OFF_OR(r => `×${(1 + 7 * r / 16383).toFixed(2)}`)], level: ['Level', PCT], pan: ['Pan', PANF],
+    rev: ['Reverb send', PCT], dly: ['Delay send', PCT], choke: ['Choke group', ['none', 'group 1', 'group 2']],
   };
   const FL = {
-    rev_size: ['גודל (דעיכה)', r => (0.2 + 0.78 * r / 16383).toFixed(2)], rev_pre: ['השהיה מקדימה', r => `${Math.round(r * 100 / 16383)} ms`],
-    rev_damp: ['ריכוך גבוהים', PCT], rev_bw: ['בהירות', PCT], rev_mod: ['תנועה', PCT], rev_level: ['עוצמה', PCT],
-    dly_time: ['זמן חופשי', r => { const ms = 10 * Math.pow(120, r / 16383); return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`; }],
-    dly_sync: ['סנכרון לטמפו', ['חופשי', '1/32', '1/16 טריולה', '1/16', '1/8 טריולה', '1/16 מנוקד', '1/8', '1/4 טריולה', '1/8 מנוקד', '1/4', '1/4 מנוקד', '1/2']],
-    dly_fb: ['משוב', r => `${Math.round(r * 110 / 16383)}%`], dly_tone: ['גוון', r => HZC(3000 + r * 10000 / 16383)],
-    dly_lowcut: ['חיתוך נמוכים', r => HZC(2400 + r * 6000 / 16383)], dly_ping: ['פינג פונג', PCT], dly_wow: ['רעד סרט', PCT],
-    dly_drive: ['רוויה', r => `×${(1 + 3 * r / 16383).toFixed(2)}`], dly_level: ['עוצמה', PCT], dly_to_rev: ['אל הריברב', PCT],
+    rev_size: ['Size (decay)', r => (0.2 + 0.78 * r / 16383).toFixed(2)], rev_pre: ['Pre-delay', r => `${Math.round(r * 100 / 16383)} ms`],
+    rev_damp: ['Damping', PCT], rev_bw: ['Brightness', PCT], rev_mod: ['Movement', PCT], rev_level: ['Level', PCT],
+    dly_time: ['Free time', r => { const ms = 10 * Math.pow(120, r / 16383); return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`; }],
+    dly_sync: ['Tempo sync', ['free', '1/32', '1/16 triplet', '1/16', '1/8 triplet', '1/16 dotted', '1/8', '1/4 triplet', '1/8 dotted', '1/4', '1/4 dotted', '1/2']],
+    dly_fb: ['Feedback', r => `${Math.round(r * 110 / 16383)}%`], dly_tone: ['Tone', r => HZC(3000 + r * 10000 / 16383)],
+    dly_lowcut: ['Low cut', r => HZC(2400 + r * 6000 / 16383)], dly_ping: ['Ping-pong', PCT], dly_wow: ['Tape wow', PCT],
+    dly_drive: ['Saturation', r => `×${(1 + 3 * r / 16383).toFixed(2)}`], dly_level: ['Level', PCT], dly_to_rev: ['Into the reverb', PCT],
   };
-  const DRUM_GROUPS = [['טון', ['tune', 'pitch_amt', 'pitch_dec', 'decay']], ['אפנון FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
-    ['רעש', ['noise', 'noise_tone', 'noise_dec', 'clap']], ['יציאה', ['drive', 'level', 'pan', 'rev', 'dly', 'choke']]];
-  const FX_GROUPS = [['ריברב', ['rev_size', 'rev_pre', 'rev_damp', 'rev_bw', 'rev_mod', 'rev_level']],
-    ['דיליי', ['dly_sync', 'dly_time', 'dly_fb', 'dly_tone', 'dly_lowcut', 'dly_ping', 'dly_wow', 'dly_drive', 'dly_level', 'dly_to_rev']]];
+  const DRUM_GROUPS = [['Tone', ['tune', 'pitch_amt', 'pitch_dec', 'decay', 'tone']], ['FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
+    ['Noise and metal', ['noise', 'metal', 'noise_mode', 'noise_cut', 'noise_reso', 'noise_dec', 'clap']], ['Output', ['drive', 'level', 'pan', 'rev', 'dly', 'choke']]];
+  const FX_GROUPS = [['Reverb', ['rev_size', 'rev_pre', 'rev_damp', 'rev_bw', 'rev_mod', 'rev_level']],
+    ['Delay', ['dly_sync', 'dly_time', 'dly_fb', 'dly_tone', 'dly_lowcut', 'dly_ping', 'dly_wow', 'dly_drive', 'dly_level', 'dly_to_rev']]];
   let kitTab = 0, drumSel = 0;
   const kitInputs = new Map();
   function setDrum(d, id, v) {
@@ -363,7 +364,7 @@
   }
   function renderKit() {
     const bar = $('kitTabs'); bar.textContent = '';
-    ['תופים', 'ריברב ודיליי'].forEach((name, i) => {
+    ['Drums', 'Reverb and delay'].forEach((name, i) => {
       const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'tab'); b.textContent = name;
       b.setAttribute('aria-selected', String(i === kitTab)); b.addEventListener('click', () => { kitTab = i; renderKit(); });
       bar.append(b);
@@ -378,7 +379,7 @@
     const body = $('kitBody'); body.textContent = ''; kitInputs.clear();
     (kitTab === 0 ? DRUM_GROUPS : FX_GROUPS).forEach(([title, keys]) => {
       const g = document.createElement('div'); g.className = 'group';
-      const h = document.createElement('h3'); h.textContent = kitTab === 0 && title === 'טון' ? `${DRUM_NAMES[drumSel]}: ${title}` : title; g.append(h);
+      const h = document.createElement('h3'); h.textContent = kitTab === 0 && title === 'Tone' ? `${DRUM_NAMES[drumSel]}: ${title}` : title; g.append(h);
       keys.forEach(k => g.append(kitControl(k, kitTab === 1)));
       body.append(g);
     });
@@ -391,15 +392,15 @@
   /* ================================================================== scales */
   const edo = (n, period = 1200) => Array.from({ length: n }, (_, k) => (period * (k + 1) / n).toFixed(5)).join('\n');
   const EXAMPLES = [
-    ['12-edo.scl', '12 שווים באוקטבה', edo(12)], ['17-edo.scl', '17 שווים באוקטבה', edo(17)],
-    ['19-edo.scl', '19 שווים באוקטבה', edo(19)], ['22-edo.scl', '22 שווים באוקטבה', edo(22)],
-    ['24-edo.scl', 'רבעי טונים', edo(24)], ['31-edo.scl', '31 שווים באוקטבה', edo(31)], ['53-edo.scl', '53 שווים באוקטבה', edo(53)],
-    ['bohlen-pierce-eq.scl', 'בולן פירס: 13 שווים במחזור של 3/1', edo(13, 1901.955)],
-    ['just-major.scl', 'מז׳ור טהור', '9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1'],
-    ['pythagorean-12.scl', 'פיתגורי, 12 צלילים', '256/243\n9/8\n32/27\n81/64\n4/3\n729/512\n3/2\n128/81\n27/16\n16/9\n243/128\n2/1'],
-    ['meantone-quarter.scl', 'מינטון רבע קומה', '76.04900\n193.15686\n310.26471\n386.31371\n503.42157\n579.47057\n696.57843\n772.62743\n889.73529\n1006.84314\n1082.89214\n1200.0'],
-    ['harmonics-8-16.scl', 'הרמוניות 8 עד 16', '9/8\n10/8\n11/8\n12/8\n13/8\n14/8\n15/8\n16/8'],
-    ['pelog-approx.scl', 'פלוג בקירוב, 7 צלילים', '120.0\n270.0\n540.0\n670.0\n785.0\n950.0\n1200.0'],
+    ['12-edo.scl', '12 equal steps to the octave', edo(12)], ['17-edo.scl', '17 equal steps to the octave', edo(17)],
+    ['19-edo.scl', '19 equal steps to the octave', edo(19)], ['22-edo.scl', '22 equal steps to the octave', edo(22)],
+    ['24-edo.scl', 'quarter tones', edo(24)], ['31-edo.scl', '31 equal steps to the octave', edo(31)], ['53-edo.scl', '53 equal steps to the octave', edo(53)],
+    ['bohlen-pierce-eq.scl', 'Bohlen-Pierce: 13 equal steps to the 3/1', edo(13, 1901.955)],
+    ['just-major.scl', 'just major', '9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1'],
+    ['pythagorean-12.scl', 'Pythagorean, 12 notes', '256/243\n9/8\n32/27\n81/64\n4/3\n729/512\n3/2\n128/81\n27/16\n16/9\n243/128\n2/1'],
+    ['meantone-quarter.scl', 'quarter-comma meantone', '76.04900\n193.15686\n310.26471\n386.31371\n503.42157\n579.47057\n696.57843\n772.62743\n889.73529\n1006.84314\n1082.89214\n1200.0'],
+    ['harmonics-8-16.scl', 'harmonics 8 to 16', '9/8\n10/8\n11/8\n12/8\n13/8\n14/8\n15/8\n16/8'],
+    ['pelog-approx.scl', 'pelog, approximate, 7 notes', '120.0\n270.0\n540.0\n670.0\n785.0\n950.0\n1200.0'],
   ].map(([name, desc, body]) => ({ name, text: `! ${name}\n!\n${desc}\n ${body.split('\n').length}\n!\n${body}\n` }));
 
   /* The tuning maths lives in C (engine/tuning.c), the same as on the FM-1. The page runs its own copy of the
@@ -450,7 +451,7 @@
     cents = Array.from({ length: n }, (_, k) => (mirror ? mirror.tun_c16(k) / 16 : 1200 * (k + 1) / 12));
     const name = tun.base.edo ? tun.base.name : current ? current.name : '';
     $('sName').textContent = name;
-    $('sMeta').textContent = `${n} דרגות · מחזור ${cents[n - 1].toFixed(2)} סנט` + (tun.mode ? ` · מודוס ${tun.mode}` : '');
+    $('sMeta').textContent = `${n} degrees · period ${cents[n - 1].toFixed(2)} cents` + (tun.mode ? ` · mode ${tun.mode}` : '');
     $('modeVal').textContent = tun.mode;
     $('refDeg').value = tun.refDeg;
     document.querySelectorAll('#list button').forEach(b => b.setAttribute('aria-current', String(!tun.base.edo && current && b.dataset.file === current.file)));
@@ -480,13 +481,13 @@
   }
   $('edoBtn').addEventListener('click', () => {
     const n = parseInt($('edoN').value, 10), c = parsePeriod($('edoP').value);
-    if (!(n >= 1 && n <= 255)) { setStatus('מספר הצעדים צריך להיות בין 1 ל־255.', true); return; }
-    if (c === null) { setStatus('המחזור צריך להיות יחס כמו 3/1, או סנטים כמו 1200.', true); return; }
+    if (!(n >= 1 && n <= 255)) { setStatus('The number of steps must be 1 to 255.', true); return; }
+    if (c === null) { setStatus('The period must be a ratio such as 3/1, or cents such as 1200.', true); return; }
     releaseAll();
-    tun.base = { edo: n, period: Math.round(c * 16), name: `${n} שווים ב־${$('edoP').value.trim()}` };
+    tun.base = { edo: n, period: Math.round(c * 16), name: `${n} equal steps to ${$('edoP').value.trim()}` };
     tun.mode = 0; tun.fine = {}; winStart = 0; current = null;
     applyTuning();
-    setStatus(`חלוקה של ${c.toFixed(2)} סנט ל־${n} צעדים של ${(c / n).toFixed(3)} סנט.`);
+    setStatus(`${c.toFixed(2)} cents in ${n} steps of ${(c / n).toFixed(3)} cents.`);
   });
   function renderFine() {
     const body = $('fineBody'); body.textContent = '';
@@ -498,7 +499,7 @@
       const b = document.createElement('td'); b.textContent = cents[d - 1].toFixed(2);
       const c = document.createElement('td'), inp = document.createElement('input');
       inp.type = 'number'; inp.min = -50; inp.max = 50; inp.step = 0.1; inp.id = 'fine-' + d;
-      inp.value = ((tun.fine[d] || 0) / 16).toFixed(1); inp.setAttribute('aria-label', `הזזה של דרגה ${d}`);
+      inp.value = ((tun.fine[d] || 0) / 16).toFixed(1); inp.setAttribute('aria-label', `Offset of degree ${d}`);
       inp.addEventListener('change', () => {
         const v = Math.round(Math.max(-50, Math.min(50, parseFloat(inp.value) || 0)) * 16);
         if (v) tun.fine[d] = v; else delete tun.fine[d];
@@ -515,9 +516,9 @@
   function applyKbm(text) {
     const v = text.replace(/\r/g, '').split('\n').filter(l => !l.startsWith('!') && l.trim() !== '').map(l => l.trim().split(/\s+/)[0]);
     const middle = parseInt(v[3], 10), refNote = parseInt(v[4], 10), freq = parseFloat(v[5]);
-    if (!(freq > 0) || Number.isNaN(middle) || Number.isNaN(refNote)) throw new Error('קובץ המיפוי לא תקין.');
+    if (!(freq > 0) || Number.isNaN(middle) || Number.isNaN(refNote)) throw new Error('The mapping file is not valid.');
     $('ref').value = freq; $('refDeg').value = refNote - middle; setRef();
-    return `דרגה ${refNote - middle} בתדר ${freq} הרץ, מקובץ המיפוי.`;
+    return `Degree ${refNote - middle} at ${freq} Hz, from the mapping file.`;
   }
 
   const latin = new TextDecoder('windows-1252');
@@ -525,7 +526,7 @@
     const out = [], notes = [];
     for (const f of list) {
       if (/\.zip$/i.test(f.name)) {
-        if (!window.JSZip) throw new Error('פתיחת קבצים דחוסים צריכה חיבור לרשת. טענו את קבצי הסולם עצמם.');
+        if (!window.JSZip) throw new Error('Opening zip files needs the network. Load the scale files themselves.');
         const zip = await JSZip.loadAsync(f);
         for (const e of Object.values(zip.files)) {
           if (e.dir || !/\.scl$/i.test(e.name) || /(^|\/)__MACOSX\//.test(e.name)) continue;
@@ -539,20 +540,20 @@
   $('pickFiles').addEventListener('change', async e => {
     try {
       const { out: got, notes } = await readAll([...e.target.files]); e.target.value = '';
-      if (!got.length) { setStatus(notes.length ? notes.join(' ') : 'לא נמצאו קבצי סולם.', !notes.length); return; }
+      if (!got.length) { setStatus(notes.length ? notes.join(' ') : 'No scale files found.', !notes.length); return; }
       if (isExample) { files = []; isExample = false; }
       files = files.concat(got); rebuild(); storeFiles();
-      setStatus(`${lib.scales.length.toLocaleString('he')} סולמות בספרייה · ${(lib.bytes.length / 1024).toFixed(1)} קילובייט` + (lib.errors.length ? ` · ${lib.errors.length} קבצים לא נכנסו` : '') + (notes.length ? ' · ' + notes.join(' ') : ''));
-      if (lib.bytes.length > 640 * 1024) setStatus('הספרייה גדולה מ־640 קילובייט, יותר ממה שהמכשיר יכול להחזיק.', true);
-    } catch (err) { setStatus(err.message || 'הקריאה נכשלה.', true); }
+      setStatus(`${lib.scales.length.toLocaleString('en')} scales in the library · ${(lib.bytes.length / 1024).toFixed(1)} KB` + (lib.errors.length ? ` · ${lib.errors.length} files left out` : '') + (notes.length ? ' · ' + notes.join(' ') : ''));
+      if (lib.bytes.length > 640 * 1024) setStatus('The library is over 640 KB, more than the FM-1 can hold.', true);
+    } catch (err) { setStatus(err.message || 'Reading failed.', true); }
   });
-  $('resetLib').addEventListener('click', () => { files = EXAMPLES.slice(); isExample = true; storeFiles(); tun.base = { lib: '22-edo.scl' }; rebuild(); setStatus('חזרה לסולמות הדוגמה.'); });
+  $('resetLib').addEventListener('click', () => { files = EXAMPLES.slice(); isExample = true; storeFiles(); tun.base = { lib: '22-edo.scl' }; rebuild(); setStatus('Back to the example scales.'); });
 
   function renderFilters() {
     const sel = $('degFilter'), was = sel.value, counts = new Map();
     lib.scales.forEach(s => counts.set(s.degrees, (counts.get(s.degrees) || 0) + 1));
     sel.length = 1;
-    [...counts.keys()].sort((a, b) => a - b).forEach(n => sel.add(new Option(`${n} דרגות (${counts.get(n)})`, String(n))));
+    [...counts.keys()].sort((a, b) => a - b).forEach(n => sel.add(new Option(`${n} degrees (${counts.get(n)})`, String(n))));
     sel.value = counts.has(+was) ? was : '';
   }
   function renderList() {
@@ -678,7 +679,7 @@
     for (let j = 0; j < 16; j++) {
       const abs = winStart + j, d = mod(abs, n), per = Math.floor(abs / n);
       const b = document.createElement('button'); b.type = 'button'; b.className = 'key' + (d === 0 ? ' first' : ''); b.dataset.j = j;
-      b.setAttribute('aria-label', `דרגה ${d}, מחזור ${per}`);
+      b.setAttribute('aria-label', `Degree ${d}, period ${per}`);
       b.innerHTML = '<span class="d"></span><span class="p"></span>';
       b.querySelector('.d').textContent = d; b.querySelector('.p').textContent = (per >= 0 ? '+' : '') + per;
       b.addEventListener('pointerdown', e => { e.preventDefault(); b.releasePointerCapture && b.releasePointerCapture(e.pointerId); press('k' + j, abs); });
@@ -686,7 +687,7 @@
       ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => b.addEventListener(t, () => release('k' + j)));
       box.append(b);
     }
-    $('winNote').textContent = n > 16 ? `דרגות ${mod(winStart, n)} עד ${mod(winStart + 15, n)}` : n < 16 ? 'הלבנים ממשיכים למחזור הבא' : 'מחזור שלם בשורה';
+    $('winNote').textContent = n > 16 ? `Degrees ${mod(winStart, n)} to ${mod(winStart + 15, n)}` : n < 16 ? 'The white keys run on into the next period' : 'One whole period in a row';
     refreshLights();
   }
   const shift = d => { winStart += d; renderKeys(); renderWheel(); };
@@ -734,14 +735,14 @@
     }
   }
   $('midiBtn').addEventListener('click', async () => {
-    if (!navigator.requestMIDIAccess) { $('midiState').textContent = 'מידי לא זמין כאן. פתחו את הקובץ בכרום.'; return; }
+    if (!navigator.requestMIDIAccess) { $('midiState').textContent = 'MIDI is not available here. Open the file in Chrome.'; return; }
     try {
       const acc = await navigator.requestMIDIAccess();
       const hook = () => { const names = []; acc.inputs.forEach(i => { i.onmidimessage = onMidi; names.push(i.name); });
         midiOuts.length = 0; acc.outputs.forEach(o => midiOuts.push(o));
-        $('midiState').textContent = names.length ? `מחובר: ${names.join(', ')}` : 'אין התקן מידי מחובר'; };
+        $('midiState').textContent = names.length ? `Connected: ${names.join(', ')}` : 'No MIDI device connected'; };
       acc.onstatechange = hook; hook(); startAudio();
-    } catch (err) { $('midiState').textContent = 'הגישה למידי נדחתה.'; }
+    } catch (err) { $('midiState').textContent = 'MIDI access was refused.'; }
   });
 
   /* ================================================================== sequencer
@@ -751,8 +752,8 @@
   const TF = { LEN: 0, SPEED: 1, DIR: 2, SWING: 3, TRANS: 4, BASE: 5, MUTE: 6, SOLO: 7, CHAN: 8 };
   const OP = { CLEAR_STEP: 0, CLEAR_TRACK: 1, CLEAR_PATTERN: 2, COPY_STEP: 3, PASTE_STEP: 4, COPY_PAGE: 5, PASTE_PAGE: 6,
     COPY_TRACK: 7, PASTE_TRACK: 8, COPY_PATTERN: 9, PASTE_PATTERN: 10, SHIFT: 11, REVERSE: 12, DOUBLE: 13, EUCLID: 14, RANDOM: 15, UNDO: 16 };
-  const TRACKS = ['צליל 1', 'צליל 2', 'צליל 3', 'מידי חיצוני', 'תופים א', 'תופים ב'];
-  const DRUMS = [['בס', 'סנר', 'האט סגור', 'האט פתוח'], ['מחיאה', 'טום נמוך', 'טום גבוה', 'רים']];
+  const TRACKS = ['Sound 1', 'Sound 2', 'Sound 3', 'External MIDI', 'Drums A', 'Drums B'];
+  const DRUMS = [['Kick', 'Snare', 'Closed hat', 'Open hat'], ['Clap', 'Low tom', 'High tom', 'Rim']];
   let editPat = 0, editTrack = 0, page = 0, selStep = 0, rec = false, stepRec = false, lastDeg = 0;
   let play = { playing: 0, pos: [-1, -1, -1, -1, -1, -1], pat: 0, q: -1, row: 0 };
 
@@ -802,7 +803,7 @@
       let used = false;
       if (mirror) for (let t = 0; t < 6 && !used; t++) for (let s = 0; s < 64 && !used; s++) used = mirror.seq_step_get(p, t, s, SF.ON) === 1;
       const b = button(String(p + 1), () => { editPat = p; ecall('seq_queue_pattern', p); if (mirror) mirror.seq_queue_pattern(p); renderSeq(); });
-      b.setAttribute('aria-pressed', String(p === editPat)); b.setAttribute('aria-label', `פטרן ${p + 1}`);
+      b.setAttribute('aria-pressed', String(p === editPat)); b.setAttribute('aria-label', `Pattern ${p + 1}`);
       if (used) b.classList.add('used');
       if (play.playing && play.pat === p) b.classList.add('playing');
       if (play.q === p) b.classList.add('queued');
@@ -817,7 +818,7 @@
       b.setAttribute('aria-pressed', String(t === editTrack));
       const mk = (txt, f, label) => { const x = button(txt, () => { scall('seq_track_set', editPat, t, f, mirror.seq_track_get(editPat, t, f) ? 0 : 1); renderTracks(); });
         x.className = 'ms'; x.setAttribute('aria-pressed', String(!!(mirror && mirror.seq_track_get(editPat, t, f)))); x.setAttribute('aria-label', `${label}: ${name}`); return x; };
-      row.append(b, mk('M', TF.MUTE, 'השתקה'), mk('S', TF.SOLO, 'סולו'));
+      row.append(b, mk('M', TF.MUTE, 'Mute'), mk('S', TF.SOLO, 'Solo'));
       box.append(row);
     });
   }
@@ -847,7 +848,7 @@
       if (s === now) b.classList.add('now');
       if (s >= len) b.classList.add('out');
       if (j % 4 === 0) b.classList.add('beat');
-      b.setAttribute('aria-label', `צעד ${s + 1}${sget(s, SF.ON) ? ', פעיל' : ''}`);
+      b.setAttribute('aria-label', `Step ${s + 1}${sget(s, SF.ON) ? ', on' : ''}`);
       b.addEventListener('click', () => {
         if (s !== selStep) { selStep = s; if (!sget(s, SF.ON)) stepOn(s); }
         else scall('seq_step_set', editPat, editTrack, s, SF.ON, sget(s, SF.ON) ? 0 : 1);
@@ -858,7 +859,7 @@
     }
     const pg = $('pages'); pg.textContent = '';
     for (let k = 0; k < 4; k++) { const b = button(`${k * 16 + 1}–${k * 16 + 16}`, () => { page = k; renderSteps(); }); b.setAttribute('aria-pressed', String(k === page)); pg.append(b); }
-    $('seqNote').textContent = rec ? 'הקלטה חיה: מה שמנגנים נכתב לצעד המתנגן, וגם תנועת המחוונים.' : stepRec ? 'כתיבת צעדים: כל צליל שמנגנים נכתב לצעד הנבחר, והבחירה מתקדמת.' : 'לחיצה על צעד בוחרת אותו ומדליקה אותו; לחיצה נוספת מכבה; לחיצה כפולה מנקה.';
+    $('seqNote').textContent = rec ? 'Live record: what you play is written to the playing step, and so are slider moves.' : stepRec ? 'Step record: each note you play is written to the selected step, and the selection moves on.' : 'Click a step to select it and turn it on; click again to turn it off; double-click clears it.';
   }
   function stepOn(s) {
     scall('seq_step_set', editPat, editTrack, s, SF.ON, 1);
@@ -872,128 +873,128 @@
     scall('seq_step_set', editPat, editTrack, s, SF.PER + k, Math.max(-3, Math.min(3, per)));
   }
 
-  const gateText = g => g === 17 ? 'קשירה' : g === 16 ? 'מלא' : `${g}/16`;
-  const CONDS = [['תמיד', 0]];
-  for (let b = 2; b <= 8; b++) for (let a = 1; a <= b; a++) CONDS.push([`מעבר ${a} מתוך ${b}`, (a << 4) | b]);
+  const gateText = g => g === 17 ? 'tie' : g === 16 ? 'full' : `${g}/16`;
+  const CONDS = [['always', 0]];
+  for (let b = 2; b <= 8; b++) for (let a = 1; a <= b; a++) CONDS.push([`pass ${a} of ${b}`, (a << 4) | b]);
   const PARAM_NAMES = PARAMS.map(p => {
     const t = TABS.find(([, g]) => g !== 'mod' && g.some(([, keys]) => keys.includes(p.key)));
-    const grp = t ? t[1].find(([, keys]) => keys.includes(p.key))[0] : 'מודולציה';
+    const grp = t ? t[1].find(([, keys]) => keys.includes(p.key))[0] : 'Modulation';
     return [`${grp}: ${L[p.key] ? L[p.key][0] : p.key}`, p.id];
   });
   function renderStepEd() {
     const box = $('stepEd'); box.textContent = '';
     const s = selStep, set = (f, v) => { scall('seq_step_set', editPat, editTrack, s, f, v); renderSteps(); };
-    box.append(heading(`צעד ${s + 1}`));
-    box.append(mini('פעיל', 'check', 0, 1, sget(s, SF.ON), null, v => { set(SF.ON, v); renderPatterns(); }));
+    box.append(heading(`Step ${s + 1}`));
+    box.append(mini('On', 'check', 0, 1, sget(s, SF.ON), null, v => { set(SF.ON, v); renderPatterns(); }));
     if (isDrum()) {
       const m = sget(s, SF.DEG), names = DRUMS[editTrack - 4];
       names.forEach((nm, i) => box.append(mini(nm, 'check', 0, 1, (m >> i) & 1, null, v => set(SF.DEG, v ? sget(s, SF.DEG) | (1 << i) : sget(s, SF.DEG) & ~(1 << i)))));
     } else {
       const nn = sget(s, SF.NOTES), n = nDeg();
-      box.append(mini('צלילים בצעד', [['1', 1], ['2', 2], ['3', 3], ['4', 4]], 1, 4, nn, null, v => { set(SF.NOTES, v); renderStepEd(); }));
+      box.append(mini('Notes in the step', [['1', 1], ['2', 2], ['3', 3], ['4', 4]], 1, 4, nn, null, v => { set(SF.NOTES, v); renderStepEd(); }));
       for (let k = 0; k < nn; k++) {
         const row = document.createElement('div'); row.className = 'noterow';
-        const lab = document.createElement('span'); lab.className = 'note'; lab.textContent = `צליל ${k + 1}`;
+        const lab = document.createElement('span'); lab.className = 'note'; lab.textContent = `Note ${k + 1}`;
         const d = document.createElement('input'); d.type = 'number'; d.min = 0; d.max = n - 1; d.value = sget(s, SF.DEG + k); d.className = 'mono';
-        d.setAttribute('aria-label', `דרגה של צליל ${k + 1}`);
+        d.setAttribute('aria-label', `Degree of note ${k + 1}`);
         d.addEventListener('change', () => set(SF.DEG + k, Math.max(0, Math.min(n - 1, parseInt(d.value, 10) || 0))));
-        const pr = document.createElement('select'); pr.setAttribute('aria-label', `מחזור של צליל ${k + 1}`);
-        for (let x = -3; x <= 3; x++) pr.add(new Option(x === 0 ? 'מחזור 0' : `מחזור ${x > 0 ? '+' : ''}${x}`, String(x)));
+        const pr = document.createElement('select'); pr.setAttribute('aria-label', `Period of note ${k + 1}`);
+        for (let x = -3; x <= 3; x++) pr.add(new Option(x === 0 ? 'period 0' : `period ${x > 0 ? '+' : ''}${x}`, String(x)));
         pr.value = String(sget(s, SF.PER + k)); pr.addEventListener('change', () => set(SF.PER + k, +pr.value));
         row.append(lab, d, pr); box.append(row);
       }
-      box.append(mini('סנטים', 'range', -50, 50, sget(s, SF.CENTS), v => `${v > 0 ? '+' : ''}${v} ¢`, v => set(SF.CENTS, v)));
+      box.append(mini('Cents', 'range', -50, 50, sget(s, SF.CENTS), v => `${v > 0 ? '+' : ''}${v} ¢`, v => set(SF.CENTS, v)));
     }
-    box.append(mini('עוצמת לחיצה', 'range', 1, 127, sget(s, SF.VEL), v => v, v => set(SF.VEL, v)));
-    if (!isDrum()) box.append(mini('אורך', 'range', 1, 17, sget(s, SF.GATE), gateText, v => set(SF.GATE, v)));
-    box.append(mini('הסתברות', 'range', 0, 100, sget(s, SF.PROB), v => v + '%', v => set(SF.PROB, v)));
-    box.append(mini('חזרות מהירות', [['1', 1], ['2', 2], ['3', 3], ['4', 4]], 1, 4, sget(s, SF.RAT), null, v => set(SF.RAT, v)));
-    if (!isDrum()) box.append(mini('החלקה לצעד הבא', 'check', 0, 1, sget(s, SF.SLIDE), null, v => set(SF.SLIDE, v)));
-    box.append(mini('תנאי', CONDS, 0, 0, sget(s, SF.COND), null, v => set(SF.COND, v)));
+    box.append(mini('Velocity', 'range', 1, 127, sget(s, SF.VEL), v => v, v => set(SF.VEL, v)));
+    if (!isDrum()) box.append(mini('Length', 'range', 1, 17, sget(s, SF.GATE), gateText, v => set(SF.GATE, v)));
+    box.append(mini('Probability', 'range', 0, 100, sget(s, SF.PROB), v => v + '%', v => set(SF.PROB, v)));
+    box.append(mini('Ratchet', [['1', 1], ['2', 2], ['3', 3], ['4', 4]], 1, 4, sget(s, SF.RAT), null, v => set(SF.RAT, v)));
+    if (!isDrum()) box.append(mini('Slide to the next step', 'check', 0, 1, sget(s, SF.SLIDE), null, v => set(SF.SLIDE, v)));
+    box.append(mini('Condition', CONDS, 0, 0, sget(s, SF.COND), null, v => set(SF.COND, v)));
     if (editTrack < 3) {
-      box.append(heading('נעילות פרמטרים'));
+      box.append(heading('Parameter locks'));
       let count = 0;
       for (let k = 0; k < 4; k++) {
         const id = sget(s, SF.LID + k); if (id === 255) continue; count++;
         const p = PARAMS[id], row = document.createElement('div'); row.className = 'lockrow';
         const sel = document.createElement('select'); PARAM_NAMES.forEach(([t, i]) => sel.add(new Option(t, String(i)))); sel.value = String(id);
-        sel.setAttribute('aria-label', `נעילה ${k + 1}: פרמטר`);
+        sel.setAttribute('aria-label', `Lock ${k + 1}: parameter`);
         sel.addEventListener('change', () => { set(SF.LID + k, +sel.value); set(SF.LVAL + k, Math.min(sget(s, SF.LVAL + k), PARAMS[+sel.value].max)); renderStepEd(); });
-        const r = document.createElement('input'); r.type = 'range'; r.min = 0; r.max = p.max; r.value = sget(s, SF.LVAL + k); r.setAttribute('aria-label', `נעילה ${k + 1}: ערך`);
+        const r = document.createElement('input'); r.type = 'range'; r.min = 0; r.max = p.max; r.value = sget(s, SF.LVAL + k); r.setAttribute('aria-label', `Lock ${k + 1}: value`);
         const v = document.createElement('span'); v.className = 'val';
         const fmt = x => (Array.isArray(L[p.key] && L[p.key][1]) ? L[p.key][1][x] : L[p.key] ? L[p.key][1](x) : x);
         v.textContent = fmt(+r.value);
         r.addEventListener('input', () => { v.textContent = fmt(+r.value); set(SF.LVAL + k, +r.value); });
-        const x = button('✕', () => { scall('seq_step_unlock', editPat, editTrack, s, id); renderSteps(); renderStepEd(); }); x.setAttribute('aria-label', 'הסרת הנעילה');
+        const x = button('✕', () => { scall('seq_step_unlock', editPat, editTrack, s, id); renderSteps(); renderStepEd(); }); x.setAttribute('aria-label', 'Remove the lock');
         row.append(sel, r, v, x); box.append(row);
       }
-      if (count < 4) box.append(button('נעילה חדשה', () => { scall('seq_step_lock', editPat, editTrack, s, byKey.cutoff.id, vals[editTrack][byKey.cutoff.id]); renderSteps(); renderStepEd(); }));
+      if (count < 4) box.append(button('New lock', () => { scall('seq_step_lock', editPat, editTrack, s, byKey.cutoff.id, vals[editTrack][byKey.cutoff.id]); renderSteps(); renderStepEd(); }));
     }
   }
   function renderTrackEd() {
     const box = $('trackEd'); box.textContent = '';
     const set = (f, v) => { scall('seq_track_set', editPat, editTrack, f, v); renderSteps(); };
-    box.append(heading(`רצועה: ${TRACKS[editTrack]}`));
-    box.append(mini('אורך', 'range', 1, 64, tget(TF.LEN), v => `${v} צעדים`, v => set(TF.LEN, v)));
-    box.append(mini('מהירות', [['×2', 0], ['×1', 1], ['×1/2', 2], ['×1/4', 3], ['×4/3 שלישונים', 4], ['×2/3', 5]], 0, 5, tget(TF.SPEED), null, v => set(TF.SPEED, v)));
-    box.append(mini('כיוון', [['קדימה', 0], ['אחורה', 1], ['הלוך ושוב', 2], ['אקראי', 3]], 0, 3, tget(TF.DIR), null, v => set(TF.DIR, v)));
-    box.append(mini('סווינג', 'range', 50, 75, tget(TF.SWING), v => v + '%', v => set(TF.SWING, v)));
+    box.append(heading(`Track: ${TRACKS[editTrack]}`));
+    box.append(mini('Length', 'range', 1, 64, tget(TF.LEN), v => `${v} steps`, v => set(TF.LEN, v)));
+    box.append(mini('Speed', [['×2', 0], ['×1', 1], ['×1/2', 2], ['×1/4', 3], ['×4/3 triplets', 4], ['×2/3', 5]], 0, 5, tget(TF.SPEED), null, v => set(TF.SPEED, v)));
+    box.append(mini('Direction', [['forward', 0], ['backward', 1], ['ping-pong', 2], ['random', 3]], 0, 3, tget(TF.DIR), null, v => set(TF.DIR, v)));
+    box.append(mini('Swing', 'range', 50, 75, tget(TF.SWING), v => v + '%', v => set(TF.SWING, v)));
     if (!isDrum()) {
-      box.append(mini('טרנספוזיציה', 'range', -64, 64, tget(TF.TRANS), v => `${v > 0 ? '+' : ''}${v} דרגות`, v => set(TF.TRANS, v)));
-      box.append(mini('מחזור בסיס', 'range', -3, 3, tget(TF.BASE), v => `${v > 0 ? '+' : ''}${v}`, v => set(TF.BASE, v)));
+      box.append(mini('Transpose', 'range', -64, 64, tget(TF.TRANS), v => `${v > 0 ? '+' : ''}${v} degrees`, v => set(TF.TRANS, v)));
+      box.append(mini('Base period', 'range', -3, 3, tget(TF.BASE), v => `${v > 0 ? '+' : ''}${v}`, v => set(TF.BASE, v)));
     }
-    if (editTrack >= 3) box.append(mini('ערוץ מידי', 'range', 1, 16, tget(TF.CHAN), v => v, v => set(TF.CHAN, v)));
-    box.append(heading('עריכה'));
+    if (editTrack >= 3) box.append(mini('MIDI channel', 'range', 1, 16, tget(TF.CHAN), v => v, v => set(TF.CHAN, v)));
+    box.append(heading('Edit'));
     const op = (o, s = 0, a = 0, b = 0, c = 0) => () => { scall('seq_op', o, editPat, editTrack, s, a, b, c); renderSeq(); };
     const tools = document.createElement('div'); tools.className = 'tools';
-    tools.append(button('העתקת צעד', op(OP.COPY_STEP, selStep)), button('הדבקת צעד', () => op(OP.PASTE_STEP, selStep)()),
-      button('העתקת עמוד', () => op(OP.COPY_PAGE, 0, page)()), button('הדבקת עמוד', () => op(OP.PASTE_PAGE, 0, page)()),
-      button('העתקת רצועה', op(OP.COPY_TRACK)), button('הדבקת רצועה', op(OP.PASTE_TRACK)),
-      button('העתקת פטרן', op(OP.COPY_PATTERN)), button('הדבקת פטרן', op(OP.PASTE_PATTERN)),
-      button('ניקוי רצועה', op(OP.CLEAR_TRACK)), button('ניקוי פטרן', op(OP.CLEAR_PATTERN)),
-      button('הזזה ←', op(OP.SHIFT, 0, -1)), button('הזזה →', op(OP.SHIFT, 0, 1)), button('היפוך', op(OP.REVERSE)), button('הכפלה', op(OP.DOUBLE)));
+    tools.append(button('Copy step', op(OP.COPY_STEP, selStep)), button('Paste step', () => op(OP.PASTE_STEP, selStep)()),
+      button('Copy page', () => op(OP.COPY_PAGE, 0, page)()), button('Paste page', () => op(OP.PASTE_PAGE, 0, page)()),
+      button('Copy track', op(OP.COPY_TRACK)), button('Paste track', op(OP.PASTE_TRACK)),
+      button('Copy pattern', op(OP.COPY_PATTERN)), button('Paste pattern', op(OP.PASTE_PATTERN)),
+      button('Clear track', op(OP.CLEAR_TRACK)), button('Clear pattern', op(OP.CLEAR_PATTERN)),
+      button('Shift ←', op(OP.SHIFT, 0, -1)), button('Shift →', op(OP.SHIFT, 0, 1)), button('Reverse', op(OP.REVERSE)), button('Double', op(OP.DOUBLE)));
     box.append(tools);
     /* generators */
     const g = { hits: 5, rot: 0, deg: lastDeg, dens: 60, lo: 0, hi: 2 * nDeg() };
-    box.append(heading('מחוללים'));
-    box.append(mini('מכות', 'range', 0, 64, g.hits, v => v, v => { g.hits = v; }));
-    box.append(mini('סיבוב', 'range', 0, 63, g.rot, v => v, v => { g.rot = v; }));
-    box.append(button('קצב אוקלידי', () => op(OP.EUCLID, 0, g.hits, g.rot, isDrum() ? 1 : lastDeg)()));
+    box.append(heading('Generators'));
+    box.append(mini('Hits', 'range', 0, 64, g.hits, v => v, v => { g.hits = v; }));
+    box.append(mini('Rotation', 'range', 0, 63, g.rot, v => v, v => { g.rot = v; }));
+    box.append(button('Euclidean rhythm', () => op(OP.EUCLID, 0, g.hits, g.rot, isDrum() ? 1 : lastDeg)()));
     if (!isDrum()) {
-      box.append(mini('צפיפות', 'range', 0, 100, g.dens, v => v + '%', v => { g.dens = v; }));
-      box.append(mini('דרגה נמוכה', 'number', -64, 255, g.lo, null, v => { g.lo = v; }));
-      box.append(mini('דרגה גבוהה', 'number', -64, 255, g.hi, null, v => { g.hi = v; }));
-      box.append(button('מלודיה אקראית בסולם', () => op(OP.RANDOM, 0, g.dens, g.lo, g.hi)()));
+      box.append(mini('Density', 'range', 0, 100, g.dens, v => v + '%', v => { g.dens = v; }));
+      box.append(mini('Lowest degree', 'number', -64, 255, g.lo, null, v => { g.lo = v; }));
+      box.append(mini('Highest degree', 'number', -64, 255, g.hi, null, v => { g.hi = v; }));
+      box.append(button('Random melody in the scale', () => op(OP.RANDOM, 0, g.dens, g.lo, g.hi)()));
     }
   }
   function renderSongEd() {
     const box = $('songEd'); box.textContent = '';
     if (!mirror) return;
-    box.append(heading(`פטרן ${editPat + 1}`));
-    box.append(mini('אורך הפטרן', 'range', 1, 64, mirror.seq_pattern_get(editPat, 0), v => `${v} צעדים`, v => scall('seq_pattern_set', editPat, 0, v)));
+    box.append(heading(`Pattern ${editPat + 1}`));
+    box.append(mini('Pattern length', 'range', 1, 64, mirror.seq_pattern_get(editPat, 0), v => `${v} steps`, v => scall('seq_pattern_set', editPat, 0, v)));
     const sc = mirror.seq_pattern_get(editPat, 1), cur = current && !tun.base.edo ? lib.scales.indexOf(current) : -1;
-    const opts = [['בלי החלפת סולם', -1]];
-    if (sc >= 0 && lib && lib.scales[sc]) opts.push([`הסולם ${lib.scales[sc].name}`, sc]);
-    if (cur >= 0 && cur !== sc) opts.push([`הסולם הנוכחי: ${current.name}`, cur]);
-    box.append(mini('סולם לפטרן', opts, -1, 0, sc, null, v => { scall('seq_pattern_set', editPat, 1, v); renderSongEd(); }));
-    box.append(heading('שיר'));
+    const opts = [['no scale change', -1]];
+    if (sc >= 0 && lib && lib.scales[sc]) opts.push([`scale ${lib.scales[sc].name}`, sc]);
+    if (cur >= 0 && cur !== sc) opts.push([`the current scale: ${current.name}`, cur]);
+    box.append(mini('Pattern scale', opts, -1, 0, sc, null, v => { scall('seq_pattern_set', editPat, 1, v); renderSongEd(); }));
+    box.append(heading('Song'));
     const n = mirror.seq_song_len();
     for (let r = 0; r < n; r++) {
       const row = document.createElement('div'); row.className = 'songrow' + (play.playing && mirror && play.row === r && songOn() ? ' now' : '');
       const i = document.createElement('span'); i.className = 'note'; i.textContent = r + 1;
-      const ps = document.createElement('select'); for (let p = 0; p < 16; p++) ps.add(new Option(`פטרן ${p + 1}`, String(p)));
-      ps.value = String(mirror.seq_song_get(r, 0)); ps.setAttribute('aria-label', `שורה ${r + 1}: פטרן`);
+      const ps = document.createElement('select'); for (let p = 0; p < 16; p++) ps.add(new Option(`Pattern ${p + 1}`, String(p)));
+      ps.value = String(mirror.seq_song_get(r, 0)); ps.setAttribute('aria-label', `Row ${r + 1}: pattern`);
       const rp = document.createElement('input'); rp.type = 'number'; rp.min = 1; rp.max = 64; rp.value = mirror.seq_song_get(r, 1); rp.className = 'mono';
-      rp.setAttribute('aria-label', `שורה ${r + 1}: חזרות`);
+      rp.setAttribute('aria-label', `Row ${r + 1}: repeats`);
       const upd = () => scall('seq_song_set', r, +ps.value, Math.max(1, Math.min(64, parseInt(rp.value, 10) || 1)));
       ps.addEventListener('change', upd); rp.addEventListener('change', upd);
       const x = button('✕', () => {
         for (let k = r; k < n - 1; k++) scall('seq_song_set', k, mirror.seq_song_get(k + 1, 0), mirror.seq_song_get(k + 1, 1));
         scall('seq_song_length', Math.max(1, n - 1)); renderSongEd();
-      }); x.setAttribute('aria-label', `מחיקת שורה ${r + 1}`);
+      }); x.setAttribute('aria-label', `Delete row ${r + 1}`);
       row.append(i, ps, rp, x); box.append(row);
     }
-    if (n < 64) box.append(button('שורה חדשה', () => { scall('seq_song_set', n, editPat, 1); renderSongEd(); }));
+    if (n < 64) box.append(button('New row', () => { scall('seq_song_set', n, editPat, 1); renderSongEd(); }));
   }
   const songOn = () => mirror && mirror.seq_song_on();
   function renderSeq() {
@@ -1041,7 +1042,7 @@
   function fromSeq(m) {
     if (m.t === 'v') {
       play = { playing: m.playing, pos: m.pos, pat: m.pat, q: m.q, row: m.row };
-      $('playBtn').textContent = play.playing ? 'עצירה' : 'ניגון';
+      $('playBtn').textContent = play.playing ? 'Stop' : 'Play';
       const key = JSON.stringify([m.playing, m.pos[editTrack], m.pat, m.q, m.row]);
       if (key !== lastPos) {
         lastPos = key;
@@ -1063,7 +1064,7 @@
   renderKit();
   (async () => {
     try { mirror = (await WebAssembly.instantiate(b64bytes(window.FM1_WASM_B64), {})).instance.exports; mirror.w_init(); }
-    catch (e) { setStatus('המנוע לא נטען בדפדפן הזה.', true); }
+    catch (e) { setStatus('The engine did not load in this browser.', true); }
     try {
       const pj = await idb.get('project');
       if (mirror && pj && pj.length === mirror.seq_project_size()) {
@@ -1076,6 +1077,6 @@
     if (stored && stored.length) { files = stored; isExample = false; }
     rebuild();
     renderSeq();
-    setStatus(isExample ? 'סולמות דוגמה. טענו קבצי סולם או את המאגר הדחוס כדי לנגן בכל סולם.' : `${lib.scales.length.toLocaleString('he')} סולמות מהספרייה ששמרתם.`);
+    setStatus(isExample ? 'Example scales. Load Scala files, or the compressed library, to play in any scale.' : `${lib.scales.length.toLocaleString('en')} scales from your saved library.`);
   })();
 })();

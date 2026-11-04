@@ -37,6 +37,13 @@ table('uint32_t', 'FILT_G_Q16', g, comment='ladder pole g, Q16, cutoff = 8.18 Hz
 out.append('#define FILT_CENTS_STEP 64')
 out.append(f'#define FILT_CENTS_MAX {64 * 256}')
 
+# the drums' noise filter (a zero-delay-feedback state variable filter): g = tan(pi f / FS), Q16, same cents grid
+tg = []
+for i in range(257):
+    f = min(F0 * 2 ** (64 * i / 1200), 18000)
+    tg.append(round(math.tan(math.pi * f / FS) * 65536))
+table('uint32_t', 'SVF_G_Q16', tg, comment='tan(pi f / FS), Q16, f = 8.18 Hz * 2^(64 i / 1200), at most 18 kHz')
+
 # times: raw 0..16383 → 1 ms .. 20 s (exponential); a one-pole coefficient per control tick, Q30
 def time_s(r): return 0.001 * (20000 ** (r / 16383))
 coef = []
