@@ -482,10 +482,10 @@
     const inWin = new Set(); for (let j = 0; j < 16; j++) inWin.add(mod(winStart + j, n));
     for (let d = 0; d < n; d++) {
       const f = fr(d), a0 = (fr(d - 1) + f) / 2, a1 = (f + fr(d + 1)) / 2;
-      const light = n > 1 ? 88 - 56 * d / (n - 1) : 60;
+      const light = n > 1 ? 76 - 54 * d / (n - 1) : 50;
       const [x, y] = at(f, R), [tx, ty] = at(f, R + 20);
       const g = el('g', { 'data-deg': d });
-      g.append(el('path', { d: sectorPath(a0, a1, R), class: 'sector', fill: `hsl(356 72% ${light}%)` }));
+      g.append(el('path', { d: sectorPath(a0, a1, R), class: 'sector', fill: `hsl(356 78% ${light}%)` }));
       g.append(el('circle', { cx: x, cy: y, r: n > 60 ? 2.5 : 4, class: 'dot' + (inWin.has(d) ? ' win' : '') }));
       if (n <= 36 || d % 5 === 0) { const t = el('text', { x: tx, y: ty + 4, 'text-anchor': 'middle' }); t.textContent = d; g.append(t); }
       svg.append(g);

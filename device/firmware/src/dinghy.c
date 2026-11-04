@@ -207,7 +207,7 @@ static void draw_wheel(void)
             while ((p >> sh) >= 65536u) sh++;
             bnd[d] = (((a + b) >> sh) << 15) / ((p >> sh) ? (p >> sh) : 1u);
         }
-        col[d] = held_deg[d] ? M_AMB : RGB(247 - (107 * f >> 8), 200 - (178 * f >> 8), 204 - (172 * f >> 8));
+        col[d] = held_deg[d] ? M_AMB : RGB(250 - (180 * f >> 8), 140 - (134 * f >> 8), 140 - (130 * f >> 8));
     }
     cv_begin(120, 120, C_BLACK);
     if (!isq[R2]) { uint32_t i, q = 0; for (i = 0; i <= (uint32_t)R2; i++) { while ((q + 1u) * (q + 1u) <= i) q++; isq[i] = (uint8_t)q; } }

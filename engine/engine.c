@@ -617,49 +617,90 @@ static void voice_tick(voice_t *v, const scale_t *sc, uint32_t vi)
     (void)vi;
 }
 
+/* one oscillator over a block, from its phases: one tight loop per wave, so no per-sample switch.
+ * pos: 0 sine, 4096 triangle, 8192 saw, 12288 pulse; between two waves both are made and crossfaded. */
+static void wave_block(int32_t *d, const uint32_t *ph, uint32_t s, uint32_t inc, uint32_t rinv, uint32_t pw)
+{
+    uint32_t i;
+    switch (s) {
+    case 0: for (i = 0; i < ENG_BLOCK; i++) d[i] = sine(ph[i]); break;
+    case 1: for (i = 0; i < ENG_BLOCK; i++) d[i] = tri(ph[i]); break;
+    case 2: for (i = 0; i < ENG_BLOCK; i++) d[i] = saw(ph[i], inc, rinv); break;
+    default: {
+        int32_t c = (int32_t)(pw >> 16) - 32768;
+        for (i = 0; i < ENG_BLOCK; i++) d[i] = saw(ph[i], inc, rinv) - saw(ph[i] + pw, inc, rinv) + c;
+    }
+    }
+}
+static void osc_block(int32_t *d, const uint32_t *ph, int32_t pos, uint32_t inc, uint32_t rinv, uint32_t pw)
+{
+    uint32_t s = (uint32_t)pos >> 12, f = (uint32_t)pos & 4095u, i;
+    int32_t tmp[ENG_BLOCK];
+    wave_block(d, ph, s, inc, rinv, pw);
+    if (!f || s >= 3u) return;
+    wave_block(tmp, ph, s + 1u, inc, rinv, pw);
+    for (i = 0; i < ENG_BLOCK; i++) d[i] += ((tmp[i] - d[i]) * (int32_t)f) >> 12;
+}
+
+/* a voice's block, in passes (phases, oscillators, mix, filter): each loop small enough to stay in registers */
 static void voice_run(voice_t *v, int32_t *bus)
 {
     const derived_t *X = &D[v->part];
     uint32_t i, inc0 = v->inc[0], inc1 = v->inc[1], incs = v->inc[2];
-    uint32_t p0 = v->p[0], p1 = v->p[1], ps = v->p[2];
-    uint32_t r0 = v->rinv[0], r1 = v->rinv[1], rs = v->rinv[2];
-    uint32_t pw0 = (uint32_t)v->m_pw[0] << 16, pw1 = (uint32_t)v->m_pw[1] << 16;
-    int32_t w0 = v->m_wave[0], w1 = v->m_wave[1];
-    int32_t l0 = X->lvl[0], l1 = v->m_lvl2, lsub = X->sub, lno = v->m_noise, lring = X->ring, drv = v->m_drive;
-    int32_t y1 = v->y1, y2 = v->y2, y3 = v->y3, y4 = v->y4, hp = v->hp, g = v->g, k = v->k, amp = v->amp;
-    int32_t mode = X->fmode, ghp = v->g_hp, sync = X->sync;
-    for (i = 0; i < ENG_BLOCK; i++) {
-        int32_t o0 = osc(w0, p0, inc0, r0, pw0), o1 = osc(w1, p1, inc1, r1, pw1), x, u, y;
-        /* each product is kept under 2^28 so that five of them fit in 32 bits */
-        int32_t mix = ((o0 * (l0 >> 1)) >> 2) + ((o1 * (l1 >> 1)) >> 2);
-        if (lsub) mix += (pulse(ps, incs, rs, 0x80000000u) * (lsub >> 1)) >> 2;
-        if (lno) mix += (rnd_q15() * (lno >> 1)) >> 2;
-        if (lring) mix += ((((o0 >> 1) * (o1 >> 1)) >> 13) * (lring >> 1)) >> 2;
-        x = (int32_t)(((i64)(mix >> 12) * drv) >> 12);
-        if (x > 98304) x = 98304;
-        if (x < -98304) x = -98304;
-        u = sat(x + ((k * x) >> 14) - ((k * y4) >> 12));
-        y1 += (int32_t)(((i64)g * (u - y1)) >> 16);
-        y2 += (int32_t)(((i64)g * (y1 - y2)) >> 16);
-        y3 += (int32_t)(((i64)g * (y2 - y3)) >> 16);
-        y4 += (int32_t)(((i64)g * (y3 - y4)) >> 16);
-        switch (mode) {
-        case 0: y = y4; break;
-        case 1: y = y2; break;
-        case 2: y = 2 * (y1 - y2); break;
-        default: y = u - 2 * y1 + y2; break;
+    uint32_t ph0[ENG_BLOCK], ph1[ENG_BLOCK];
+    int32_t o0[ENG_BLOCK], o1[ENG_BLOCK];
+    int32_t l0 = X->lvl[0] >> 1, l1 = v->m_lvl2 >> 1, lsub = X->sub >> 1, lno = v->m_noise >> 1, lring = X->ring >> 1;
+
+    /* phases: osc 2 restarts on osc 1's wrap when synced */
+    {
+        uint32_t p0 = v->p[0], p1 = v->p[1];
+        if (X->sync) {
+            for (i = 0; i < ENG_BLOCK; i++) { uint32_t n0 = p0 + inc0; ph0[i] = p0; ph1[i] = p1; p1 = n0 < p0 ? 0u : p1 + inc1; p0 = n0; }
+        } else {
+            for (i = 0; i < ENG_BLOCK; i++) { ph0[i] = p0; ph1[i] = p1; p0 += inc0; p1 += inc1; }
         }
-        if (ghp) { hp += (int32_t)(((i64)ghp * (y - hp)) >> 16); y -= hp; }
-        y = (y * amp) >> 15;
-        bus[2 * i] += (y * v->gl) >> 15;
-        bus[2 * i + 1] += (y * v->gr) >> 15;
-        amp += v->amp_step;
-        g += v->g_step;
-        { uint32_t n0 = p0 + inc0; if (sync && n0 < p0) p1 = 0u; else p1 += inc1; p0 = n0; }
-        ps += incs;
+        v->p[0] = p0; v->p[1] = p1;
     }
-    v->p[0] = p0; v->p[1] = p1; v->p[2] = ps;
-    v->y1 = y1; v->y2 = y2; v->y3 = y3; v->y4 = y4; v->hp = hp; v->g = g; v->amp = amp;
+    osc_block(o0, ph0, v->m_wave[0], inc0, v->rinv[0], (uint32_t)v->m_pw[0] << 16);
+    osc_block(o1, ph1, v->m_wave[1], inc1, v->rinv[1], (uint32_t)v->m_pw[1] << 16);
+
+    /* the mix (in o0 from here); each product is kept under 2^28 so that five of them fit in 32 bits */
+    if (lring) for (i = 0; i < ENG_BLOCK; i++) o1[i] = ((o1[i] * l1) >> 2) + ((((((o0[i] >> 1) * (o1[i] >> 1)) >> 13)) * lring) >> 2);
+    else for (i = 0; i < ENG_BLOCK; i++) o1[i] = (o1[i] * l1) >> 2;
+    for (i = 0; i < ENG_BLOCK; i++) o0[i] = ((o0[i] * l0) >> 2) + o1[i];
+    if (lsub) {
+        uint32_t ps = v->p[2], rs = v->rinv[2];
+        for (i = 0; i < ENG_BLOCK; i++) { o0[i] += ((saw(ps, incs, rs) - saw(ps + 0x80000000u, incs, rs)) * lsub) >> 2; ps += incs; }
+        v->p[2] = ps;
+    } else v->p[2] += incs * ENG_BLOCK;
+    if (lno) for (i = 0; i < ENG_BLOCK; i++) o0[i] += (rnd_q15() * lno) >> 2;
+
+    /* drive, the ladder, the high-pass, the amplitude and the pan */
+    {
+        int32_t y1 = v->y1, y2 = v->y2, y3 = v->y3, y4 = v->y4, hp = v->hp, g = v->g, k = v->k, amp = v->amp;
+        int32_t drv = v->m_drive, ghp = v->g_hp, mode = X->fmode, gl = v->gl, gr = v->gr;
+        int32_t as = v->amp_step, gs = v->g_step;
+        for (i = 0; i < ENG_BLOCK; i++) {
+            int32_t x = (int32_t)(((i64)(o0[i] >> 12) * drv) >> 12), u;
+            if (x > 98304) x = 98304;
+            if (x < -98304) x = -98304;
+            u = sat(x + ((k * x) >> 14) - ((k * y4) >> 12));
+            y1 += (int32_t)(((i64)g * (u - y1)) >> 16);
+            y2 += (int32_t)(((i64)g * (y1 - y2)) >> 16);
+            y3 += (int32_t)(((i64)g * (y2 - y3)) >> 16);
+            y4 += (int32_t)(((i64)g * (y3 - y4)) >> 16);
+            o1[i] = mode == 0 ? y4 : mode == 1 ? y2 : mode == 2 ? 2 * (y1 - y2) : u - 2 * y1 + y2;
+            g += gs;
+        }
+        if (ghp) for (i = 0; i < ENG_BLOCK; i++) { hp += (int32_t)(((i64)ghp * (o1[i] - hp)) >> 16); o1[i] -= hp; }
+        for (i = 0; i < ENG_BLOCK; i++) {
+            int32_t y = (o1[i] * amp) >> 15;
+            bus[2 * i] += (y * gl) >> 15;
+            bus[2 * i + 1] += (y * gr) >> 15;
+            amp += as;
+        }
+        v->y1 = y1; v->y2 = y2; v->y3 = y3; v->y4 = y4; v->hp = hp; v->g = g; v->amp = amp;
+    }
 }
 
 /* ------------------------------------------------------------------ public */
