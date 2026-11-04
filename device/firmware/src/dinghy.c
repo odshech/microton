@@ -10,13 +10,15 @@
  *   REC            the load test: 8 voices of the heaviest sound, held
  *   HOME           clears the peak load and the count of voices dropped for load (CUT n)
  *   KNOB 1..4      cutoff, resonance, envelope 1 release, drive (part 1)
- *   FX             the knobs switch to: reverb level, reverb size, delay level, delay feedback (FX lit), PRESETS
- *                  to the delay's time (free, 1/32 .. 1/2 of the tempo); the screen shows the values
+ *   EDIT SEL ENV LFO GLO FX ARP   edit pages (pages.h): oscillators, filter, envelopes, LFOs and modulation,
+ *                  voice and output, reverb and delay, drums. Press again (or turn ALGORITHM) for the next bank;
+ *                  the knobs edit what the screen shows; PRESETS picks the sound or the drum; HOME closes the page
  *   PRESETS        the scale          SELECT  the tempo
  *   MIDI in        notes on the white-key map (C4 = the window's first degree), bend, mod wheel, NRPN = parameters
  *
  * Integers only: the chip has no FPU and no libgcc. tests/host.c runs this file on a computer. */
 #define APP_NAME "MICROTON"
+#define CV_MAX (240u * 120u)                    /* the edit panel: 240 x 120 at once (in the pool) */
 static void app_idle(void);
 #define LCD_IDLE app_idle
 #include "platform.c"
@@ -59,7 +61,7 @@ static void app_audio(int32_t *out, uint32_t n)
 /* ---- state (main loop) */
 static uint32_t scale_i = 3;                    /* in LIB_ORDER: 22-EDO */
 static int32_t win = 0;                         /* the first degree on the white keys */
-static int hold, stress, playing_seq, fx_page;
+static int hold, stress, playing_seq;
 static int32_t key_deg[27];                     /* the degree each key started */
 static uint8_t held_deg[256];                   /* degrees sounding from the keys (mod n), for the wheel */
 static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
@@ -245,33 +247,9 @@ static void draw_wheel(void)
 
 static void draw_line(uint32_t y, const char *s, uint16_t c) { draw_text_box(0, (int32_t)y, 240, &FONT_S, s, c, 1); }
 
-/* the FX page: the effects' values where the scale's lines are */
-static char *putpct(char *p, uint32_t raw, uint32_t full) { p = putn(p, (raw * full + 8191u) / 16383u); *p++ = '%'; return p; }
-static void draw_fx(void)
-{
-    static const char *const SYNC[12] = {"", "1/32", "1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/4.", "1/2"};
-    char b[48], *p = b;
-    uint32_t sz = 20u + (eng_fx_get(FX_REV_SIZE) * 78u + 8191u) / 16383u, sy = eng_fx_get(FX_DLY_SYNC);
-    p = put(p, "REV "); p = putpct(p, eng_fx_get(FX_REV_LEVEL), 100u);
-    p = put(p, "  SIZE 0."); p = putn(p, sz);
-    *p = 0;
-    draw_line(150, b, M_AMB);
-    p = b;
-    p = put(p, "DLY "); p = putpct(p, eng_fx_get(FX_DLY_LEVEL), 100u);
-    p = put(p, "  FB "); p = putpct(p, eng_fx_get(FX_DLY_FB), 110u); p = put(p, "  ");
-    if (sy && sy < 12u) p = put(p, SYNC[sy]);
-    else {                                      /* free: 10 ms x 120^(r/16383), 2^x by a quadratic */
-        uint32_t x = (eng_fx_get(FX_DLY_TIME) * 452665u) / 16383u, ip = x >> 16, f = x & 0xFFFFu;
-        uint32_t m = 65536u + ((f * (43025u + ((22511u * f) >> 16))) >> 16);
-        p = putn(p, ((10u * m) << ip) >> 16); p = put(p, "MS");
-    }
-    *p = 0;
-    draw_line(170, b, M_TXT);
-}
 static void draw_scale(void)
 {
     char b[48], nm[20], *p = b;
-    if (fx_page) { draw_fx(); return; }
     p = put(p, scale_name(LIB_ORDER[scale_i], nm));
     *p = 0;
     draw_line(150, b, M_TXT);
@@ -287,7 +265,7 @@ static void draw_seq(uint32_t voices)
     char b[48], *p = b;
     uint32_t bpm = seq_tempo();
     p = put(p, playing_seq ? "PLAY " : "STOP "); p = putn(p, bpm / 100u); *p++ = '.'; p = putn(p, bpm / 10u % 10u);
-    p = put(p, "  "); p = putn(p, voices); p = put(p, stress ? "/8 TEST" : fx_page ? "/8  FX" : "/8 VOICES");
+    p = put(p, "  "); p = putn(p, voices); p = put(p, stress ? "/8 TEST" : "/8 VOICES");
     *p = 0;
     draw_line(190, b, stress ? M_AMB : M_DIM);
 }
@@ -358,16 +336,6 @@ static void midi_in(void)
 static void app_idle(void) { if (idle_ok) midi_in(); }
 
 /* the four knobs: detents step a parameter of part 1 */
-static int fxknob(uint32_t enc, uint32_t id, int32_t step)   /* 1 = turned */
-{
-    int32_t e = fm1_enc_take(enc), v;
-    if (!e) return 0;
-    v = (int32_t)eng_fx_get(id) + e * step;
-    if (v < 0) v = 0;
-    if (v > (int32_t)eng_fx_param_max(id)) v = (int32_t)eng_fx_param_max(id);
-    eng_fx_set(id, (uint32_t)v);
-    return 1;
-}
 static void knob(uint32_t enc, uint32_t id, int32_t step)
 {
     int32_t e = fm1_enc_take(enc), v;
@@ -378,10 +346,12 @@ static void knob(uint32_t enc, uint32_t id, int32_t step)
     eng_set_param(0, id, (uint32_t)v);
 }
 
+#include "pages.h"
+
 static void app_main(void)
 {
     uint32_t prev = 0, k, b, rel, t_draw = 0, t_hdr = 0, voices_drawn = ~0u, seq_drawn = ~0u, load_drawn = ~0u;
-    int scale_dirty = 1, wheel_dirty = 1;
+    int scale_dirty = 1, wheel_dirty = 1, panel_dirty = 0;
     eng_init();
     seq_init();
     scale_load();
@@ -401,7 +371,11 @@ static void app_main(void)
         for (k = 0; k < 27u; k++) {
             int32_t w = key_white(k), bk;
             if (down >> k & 1u) {
-                if (w >= 0) { key_deg[k] = win + w; note_on(key_deg[k], 100); wheel_dirty = 1; }
+                if (w >= 0 && pg >= 0 && PAGES[pg].target == T_DRUM) {   /* the drum page: keys 1..8 play the drums */
+                    if (w < 8) { eng_drum_hit((uint32_t)w, 110); if (pg_drum != (uint32_t)w) { pg_drum = (uint32_t)w; panel_dirty = 1; } }
+                    key_deg[k] = 0x7FFFFFFF;
+                }
+                else if (w >= 0) { key_deg[k] = win + w; note_on(key_deg[k], 100); wheel_dirty = 1; }
                 else if ((bk = key_black(k)) >= 0) {
                     switch (bk) {
                     case 0: win--; break;
@@ -419,7 +393,7 @@ static void app_main(void)
                     scale_dirty = wheel_dirty = 1;
                 }
             }
-            if (up >> k & 1u && w >= 0) { note_off(key_deg[k]); wheel_dirty = 1; }
+            if (up >> k & 1u && w >= 0 && key_deg[k] != 0x7FFFFFFF) { note_off(key_deg[k]); wheel_dirty = 1; }
         }
 
         /* buttons */
@@ -428,23 +402,25 @@ static void app_main(void)
         if (b & (1u << BTN_OCT_UP)) { win += (int32_t)n; scale_dirty = 1; }
         if (b & (1u << BTN_PLAY)) { if (playing_seq) seq_stop(); else seq_play(); playing_seq = !playing_seq; }
         if (b & (1u << BTN_REC)) { stress = !stress; stress_set(stress); }
-        if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; }
+        if (b & (1u << BTN_HOME)) { load_peak = 0; shed_count = 0; if (pg >= 0) { pg = -1; wheel_dirty = 1; lcd_fill(0, 26, 240, 120, C_BLACK); } }
+        if (pages_button(b)) panel_dirty = 1;
 
         /* encoders */
-        if (b & (1u << BTN_FX)) { fx_page = !fx_page; scale_dirty = 1; }
-        if (fx_page) {                              /* FX: the reverb's and the delay's main controls, shown */
-            scale_dirty |= fxknob(ENC_KNOB1, FX_REV_LEVEL, 200) | fxknob(ENC_KNOB2, FX_REV_SIZE, 200)
-                         | fxknob(ENC_KNOB3, FX_DLY_LEVEL, 200) | fxknob(ENC_KNOB4, FX_DLY_FB, 200);
+        if (pg >= 0) {                              /* an edit page: its four parameters */
+            if (pages_knobs()) panel_dirty = 1;
+            if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) {
+                pg_bank = (uint32_t)imod((int32_t)pg_bank + e, (int32_t)PAGES[pg].nbanks); panel_dirty = 1;
+            }
         } else {
             knob(ENC_KNOB1, P_CUTOFF, 160);
             knob(ENC_KNOB2, P_RESO, 160);
             knob(ENC_KNOB3, P_E1_R, 160);
             knob(ENC_KNOB4, P_DRIVE, 160);
         }
-        if (fx_page && (e = fm1_enc_take(ENC_PRESETS)) != 0) {           /* FX: PRESETS sets the delay's time */
-            int32_t sy = (int32_t)eng_fx_get(FX_DLY_SYNC) + e;
-            eng_fx_set(FX_DLY_SYNC, (uint32_t)(sy < 0 ? 0 : sy > 11 ? 11 : sy));
-            scale_dirty = 1;
+        if (pg >= 0 && PAGES[pg].target != T_FX && (e = fm1_enc_take(ENC_PRESETS)) != 0) {   /* which sound, which drum */
+            if (PAGES[pg].target == T_SYN) pg_part = (uint32_t)imod((int32_t)pg_part + e, (int32_t)ENG_PARTS);
+            else { pg_drum = (uint32_t)imod((int32_t)pg_drum + e, (int32_t)ENG_DRUMS); eng_drum_hit(pg_drum, 100); }
+            panel_dirty = 1;
         } else if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
             all_off();
             scale_i = (uint32_t)imod((int32_t)scale_i + e, (int32_t)sizeof LIB_ORDER);
@@ -471,15 +447,16 @@ static void app_main(void)
         for (k = 0; k < 16u; k++) fm1_led_key(KEY_LED(WHITE_KEY[k]), held_deg[imod(win + (int32_t)k, (int32_t)n)] != 0);
         fm1_led_key(BTN_PLAY, playing_seq);
         fm1_led_key(BTN_REC, stress);
-        fm1_led_key(BTN_FX, fx_page);
+        for (k = 0; k < NPAGES; k++) fm1_led_key(PAGES[k].button, pg == (int32_t)k);
 
         /* the screen: only what changed, the numbers ten times a second */
         idle_ok = 1;
         if (fm1_ms - t_hdr > 2000u || !t_hdr) { t_hdr = fm1_ms | 1u; draw_header(); }
-        if (wheel_dirty) { wheel_dirty = 0; draw_wheel(); }
+        if (pg >= 0) { if (panel_dirty) { panel_dirty = 0; draw_panel(); } wheel_dirty = 0; }
+        else if (wheel_dirty) { wheel_dirty = 0; draw_wheel(); }
         if (scale_dirty) { scale_dirty = 0; draw_scale(); }
         if (fm1_ms - t_draw > 100u) {
-            uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | (uint32_t)fx_page << 2 | seq_tempo() << 3;
+            uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | (uint32_t)(pg + 1) << 2 | seq_tempo() << 6;
             uint32_t ld = (load_avg / 10u) | (load_peak / 10u) << 10 | (shed_count & 0xFFu) << 20;
             t_draw = fm1_ms;
             if (v != voices_drawn || sq != seq_drawn) { voices_drawn = v; seq_drawn = sq; draw_seq(v); }

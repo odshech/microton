@@ -14,6 +14,6 @@ F(DLY_TONE,   "dly_tone",   12000, 16383, C)   /* low-pass in the loop */
 F(DLY_LOWCUT, "dly_lowcut",  2500, 16383, C)   /* high-pass in the loop */
 F(DLY_PING,   "dly_ping",   10000, 16383, C)   /* 0 = both sides, full = ping-pong */
 F(DLY_WOW,    "dly_wow",     2500, 16383, C)   /* tape wow */
-F(DLY_DRIVE,  "dly_drive",   3000, 16383, C)   /* saturation in the loop */
+F(DLY_DRIVE,  "dly_drive",      0, 16383, C)   /* saturation in the loop */
 F(DLY_LEVEL,  "dly_level",   8000, 16383, C)
 F(DLY_TO_REV, "dly_to_rev",  4000, 16383, C)   /* the delay into the reverb */

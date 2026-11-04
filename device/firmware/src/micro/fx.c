@@ -54,7 +54,7 @@ static uint32_t fx_bpm = 12000u;
 
 static struct {
     int32_t decay, dd2, damp, bwc, mod, rlevel; uint32_t pre;
-    int32_t fb, tone_g, lc_g, ping, wow, drive, dlevel, to_rev; int32_t dly_q8;   /* the delay's target, Q8 */
+    int32_t fb, tone_g, lc_g, ping, wow, drive, drive_inv, dlevel, to_rev; int32_t dly_q8;   /* the delay's target, Q8 */
 } fxd;
 static struct {
     int32_t bw, lpl, lpr; uint32_t lfo, rquiet, dquiet;
@@ -118,7 +118,8 @@ static void fx_derive(void)
     fxd.lc_g = (int32_t)FILT_G_Q16[(uint32_t)c / FILT_CENTS_STEP];
     fxd.ping = q15(R[FX_DLY_PING]);
     fxd.wow = q15(R[FX_DLY_WOW]);
-    fxd.drive = 4096 + (int32_t)((R[FX_DLY_DRIVE] * 12288u) / 16383u);           /* x1 .. x4 */
+    fxd.drive = 4096 + (int32_t)((R[FX_DLY_DRIVE] * 12288u) / 16383u);           /* x1 .. x4 into the knee */
+    fxd.drive_inv = (int32_t)((4096u * 4096u) / (uint32_t)fxd.drive);              /* and back out: no gain */
     fxd.dlevel = q15(R[FX_DLY_LEVEL]);
     fxd.to_rev = q15(R[FX_DLY_TO_REV]);
     if (R[FX_DLY_SYNC] && R[FX_DLY_SYNC] < 12u) {
@@ -153,6 +154,45 @@ static void fx_init(void)
 
 static inline int32_t iabs(int32_t x) { return x < 0 ? -x : x; }
 
+/* the delay's rate change: a 55-tap half-band FIR (Kaiser 5.6), flat to 9 kHz, -59 dB from 12.5 kHz. Q16.
+ * Half the taps are zero; the rest are symmetric: 14 products per output, each way. */
+#define HB_TAPS 14
+#define HB_C 32771
+static const int32_t HB[HB_TAPS] = {20790, -6739, 3822, -2507, 1736, -1224, 862, -597, 403, -261, 159, -90, 44, -17};   /* at offsets 1, 3, 5 .. 27 */
+static int32_t hb_in[64], hb_out[2][32];
+static uint32_t hb_iw, hb_ow;
+/* two full-rate samples in, one half-rate sample out */
+static inline int32_t hb_down(int32_t a, int32_t b)
+{
+    int64_t acc;
+    uint32_t j, c;
+    hb_in[hb_iw & 63u] = a; hb_in[(hb_iw + 1u) & 63u] = b; hb_iw += 2u;
+    c = hb_iw - 28u;                                                    /* the centre: 27 samples back */
+    acc = (int64_t)HB_C * hb_in[c & 63u];
+    for (j = 0; j < HB_TAPS; j++) acc += (int64_t)HB[j] * (hb_in[(c - 2u * j - 1u) & 63u] + hb_in[(c + 2u * j + 1u) & 63u]);
+    return (int32_t)(acc >> 16);
+}
+/* one half-rate sample in, two full-rate samples out (gain 2: the zeros between) */
+static inline void hb_up(uint32_t ch, int32_t x, int32_t *o0, int32_t *o1)
+{
+    int64_t acc = 0;
+    uint32_t j, w = hb_ow;
+    int32_t *h = hb_out[ch];
+    h[w & 31u] = x;
+    for (j = 0; j < HB_TAPS; j++) acc += (int64_t)HB[j] * (h[(w - 13u + j) & 31u] + h[(w - 14u - j) & 31u]);
+    *o0 = (int32_t)(acc >> 15);                                         /* between: the side taps */
+    *o1 = h[(w - 13u) & 31u];                                           /* on a sample: the centre tap x 2 = 1 */
+}
+/* the loop's limiter: clean below 3/4 of full scale, then a soft knee */
+static inline int32_t knee(int32_t x)
+{
+    int32_t t = iabs(x) - 24576;
+    if (t <= 0) return x;
+    if (t > 1 << 20) t = 1 << 20;
+    t = 24576 + (int32_t)(((uint32_t)t * 8191u) / ((uint32_t)t + 8191u));
+    return x < 0 ? -t : t;
+}
+
 /* one block: rev and dly are the mono sends; the returns are added to out (L R). */
 static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
 {
@@ -170,10 +210,10 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
         uint32_t loud = 0;
         fxs.wph += 64000000u;                                              /* ~0.66 Hz */
         for (i = 0; i < ENG_BLOCK / 2u; i++) {
-            int32_t x = clamp16((dly[2 * i] + dly[2 * i + 1]) >> 1), s[2], f[2], c;
+            int32_t x = clamp16(hb_down(dly[2 * i], dly[2 * i + 1])), s[2], f[2], c;
             int32_t k = fxs.dq + wow;
             fxs.dq += (fxd.dly_q8 - fxs.dq) >> 9;                            /* the time glides */
-            s[0] = dl_frac(&dl_l, k); s[1] = dl_frac(&dl_r, k);
+            s[0] = dl_frac(&dl_l, k) * 2; s[1] = dl_frac(&dl_r, k) * 2;   /* the lines hold half level: 6 dB of room */
             loud |= (uint32_t)(iabs(s[0]) > 2) | (uint32_t)(iabs(s[1]) > 2);
             for (c = 0; c < 2; c++) {                                     /* the loop's filters and drive */
                 int32_t y = s[c];
@@ -181,16 +221,17 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
                 y = fxs.lp[c];
                 fxs.hp[c] += (int32_t)(((i64)fxd.lc_g * (y - fxs.hp[c])) >> 16);
                 y -= fxs.hp[c];
-                f[c] = sat((int32_t)(((i64)y * fxd.drive) >> 12));
+                f[c] = (int32_t)(((i64)knee((int32_t)(((i64)y * fxd.drive) >> 12)) * fxd.drive_inv) >> 12);   /* no gain */
             }
-            dl_push(&dl_l, x + (int32_t)(((i64)(((f[1] * ping) >> 15) + ((f[0] * nping) >> 15)) * fb) >> 15));
-            dl_push(&dl_r, ((x * nping) >> 15) + (int32_t)(((i64)(((f[0] * ping) >> 15) + ((f[1] * nping) >> 15)) * fb) >> 15));
-            for (c = 0; c < 2; c++) {                                     /* back to full rate, linearly */
-                int32_t y1 = (s[c] * lvl) >> 15;
-                out[4 * i + c] += (fxs.prev[c] + y1) >> 1;
+            dl_push(&dl_l, (x + (int32_t)(((i64)(((f[1] * ping) >> 15) + ((f[0] * nping) >> 15)) * fb) >> 15)) >> 1);
+            dl_push(&dl_r, (((x * nping) >> 15) + (int32_t)(((i64)(((f[0] * ping) >> 15) + ((f[1] * nping) >> 15)) * fb) >> 15)) >> 1);
+            for (c = 0; c < 2; c++) {                                     /* back to full rate */
+                int32_t y0, y1;
+                hb_up((uint32_t)c, (s[c] * lvl) >> 15, &y0, &y1);
+                out[4 * i + c] += y0;
                 out[4 * i + 2 + c] += y1;
-                fxs.prev[c] = y1;
             }
+            hb_ow++;
             if (tr) { int32_t m = (((s[0] + s[1]) >> 1) * tr) >> 15; rin[2 * i] += m; rin[2 * i + 1] += m; }
         }
         fxs.dquiet = loud || any ? 0u : fxs.dquiet + ENG_BLOCK / 2u;
