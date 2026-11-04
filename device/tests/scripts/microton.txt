@@ -1,0 +1,19 @@
+# MICROTON: a chord on the white keys, the demo pattern, the 8-voice load test, the next scale
+200 keys 0x1
+500 keys 0x91
+1100 shot
+1300 keys 0
+1500 btn 12
+4000 shot
+4300 btn 12
+4500 btn 13
+6500 shot
+6600 btn 13
+6800 keys 0x400000
+6900 keys 0
+7000 keys 0x400000
+7100 keys 0
+7300 keys 0x1
+7600 shot
+7800 keys 0
+8200 end

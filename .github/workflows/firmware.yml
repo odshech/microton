@@ -1,0 +1,60 @@
+# Builds the FM-1 firmware on GitHub (the JieLi toolchain is downloaded here, as Dinghy's own workflow does),
+# runs the engine tests and the firmware on the host emulator, and keeps the package as an artifact:
+# Actions → firmware → the latest run → Artifacts → microton-firmware (microton.fwsc and the emulator's screens).
+name: firmware
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Python packages
+        run: python3 -m pip install Pillow
+
+      - name: Engine tests (the same C as the firmware)
+        run: |
+          cc -O2 -std=gnu99 -Iengine tests/test_engine.c engine/engine.c engine/tuning.c -lm -o /tmp/test_engine && /tmp/test_engine
+          cc -O2 -std=gnu99 -Iengine tests/test_seq.c engine/engine.c engine/tuning.c engine/seq.c -lm -o /tmp/test_seq && /tmp/test_seq
+          sh sync_device.sh
+
+      - name: JieLi toolchain (pkgman.jieliapp.com)
+        working-directory: device
+        run: sh tools/get_toolchain.sh
+
+      - name: JieLi AC79 SDK (three files of it go into the package)
+        run: |
+          for i in 1 2 3; do
+            git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
+                https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK && break
+            rm -rf ~/fw-AC79_AIoT_SDK
+            sleep 20
+          done
+          test -d ~/fw-AC79_AIoT_SDK
+
+      - name: Build the firmware
+        working-directory: device
+        run: |
+          sh build.sh 2>&1 | tee build-log.txt
+          cp build/dinghy.fwsc build/microton.fwsc
+
+      - name: The firmware on the host emulator (screens and sound)
+        working-directory: device
+        run: |
+          mkdir -p build/host
+          cc -O2 -Wall -Wno-unused-function -DDINGHY_HOST -DAPP_VER='"dev"' -Ifirmware/hal -Ifirmware/src -Ifirmware/gen \
+             -o build/host/microton firmware/src/dinghy.c
+          build/host/microton build/host/microton tests/scripts/microton.txt
+          python3 -c "from PIL import Image; from pathlib import Path; [Image.open(p).resize((480, 480), Image.NEAREST).save(p.with_suffix('.png')) for p in Path('build/host').glob('microton-*.ppm')]"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: microton-firmware
+          path: |
+            device/build/microton.fwsc
+            device/build-log.txt
+            device/build/host/*.png

@@ -1,0 +1,79 @@
+/* Every sound parameter, once. P(id, key, default, max, kind)
+ *   kind C: continuous, raw 0..16383 · B: bipolar, raw 0..16383, centre 8192 · E: a choice, raw 0..max
+ * Raw values are 14-bit so that every parameter maps onto one MIDI NRPN. Order = NRPN number: append only. */
+
+/* oscillator 1 */
+P(O1_WAVE,     "o1_wave",     10923, 16383, C)   /* sine → triangle → saw → pulse, continuous */
+P(O1_PW,       "o1_pw",        8192, 16383, C)   /* pulse width 2 % .. 98 %, 8192 = 50 % */
+P(O1_LEVEL,    "o1_level",    13000, 16383, C)
+P(O1_DEG,      "o1_deg",         24,    48, E)   /* -24 .. +24 scale degrees */
+/* oscillator 2 */
+P(O2_WAVE,     "o2_wave",     16383, 16383, C)
+P(O2_PW,       "o2_pw",        9000, 16383, C)
+P(O2_LEVEL,    "o2_level",     7000, 16383, C)
+P(O2_DEG,      "o2_deg",         24,    48, E)
+P(O2_CENTS,    "o2_cents",     8192, 16383, B)   /* -100 .. +100 cents */
+P(O2_SYNC,     "o2_sync",         0,     1, E)
+/* other sources */
+P(SUB_LEVEL,   "sub_level",       0, 16383, C)
+P(NOISE_LEVEL, "noise_level",     0, 16383, C)
+P(RING_LEVEL,  "ring_level",      0, 16383, C)
+P(DRIVE,       "drive",        2000, 16383, C)   /* saturation before the filter */
+/* filter */
+P(FLT_MODE,    "flt_mode",        0,     3, E)   /* LP 24 dB, LP 12 dB, BP 12 dB, HP 12 dB */
+P(CUTOFF,      "cutoff",       9500, 16383, C)
+P(RESO,        "reso",         4000, 16383, C)
+P(FLT_KEYTRK,  "flt_keytrk",   8192, 16383, C)   /* 0 .. 100 % of the played pitch */
+P(FLT_ENV,     "flt_env",     11500, 16383, B)   /* env 2 → cutoff, -8 .. +8 octaves */
+P(FLT_VEL,     "flt_vel",      8192, 16383, B)   /* velocity → cutoff, -4 .. +4 octaves */
+P(HPF,         "hpf",             0, 16383, C)
+/* envelope 1: amplitude */
+P(E1_A,        "e1_a",          800, 16383, C)
+P(E1_D,        "e1_d",         7000, 16383, C)
+P(E1_S,        "e1_s",        12000, 16383, C)
+P(E1_R,        "e1_r",         7000, 16383, C)
+P(E1_CURVE,    "e1_curve",        0, 16383, C)   /* 0 = exponential, up = more linear */
+/* envelope 2: filter */
+P(E2_A,        "e2_a",          500, 16383, C)
+P(E2_D,        "e2_d",         7500, 16383, C)
+P(E2_S,        "e2_s",         4000, 16383, C)
+P(E2_R,        "e2_r",         7000, 16383, C)
+P(E2_CURVE,    "e2_curve",        0, 16383, C)
+/* envelope 3: free */
+P(E3_A,        "e3_a",         4000, 16383, C)
+P(E3_D,        "e3_d",         8000, 16383, C)
+P(E3_S,        "e3_s",            0, 16383, C)
+P(E3_R,        "e3_r",         8000, 16383, C)
+P(E3_CURVE,    "e3_curve",        0, 16383, C)
+/* LFOs */
+P(L1_SHAPE,    "l1_shape",        0,     4, E)   /* triangle, sine, saw, square, sample & hold */
+P(L1_RATE,     "l1_rate",      9500, 16383, C)   /* 0.02 .. 40 Hz */
+P(L1_DELAY,    "l1_delay",        0, 16383, C)
+P(L1_GLOBAL,   "l1_global",       0,     1, E)   /* 0 = one per voice, 1 = shared */
+P(L2_SHAPE,    "l2_shape",        1,     4, E)
+P(L2_RATE,     "l2_rate",      5000, 16383, C)
+P(L2_DELAY,    "l2_delay",        0, 16383, C)
+P(L2_GLOBAL,   "l2_global",       1,     1, E)
+/* modulation matrix: 8 slots */
+P(M1_SRC, "m1_src", 10, 10, E) P(M1_DST, "m1_dst", 1, 15, E)  P(M1_AMT, "m1_amt", 9250, 16383, B)  /* vibrato on the wheel */
+P(M2_SRC, "m2_src", 0, 10, E)  P(M2_DST, "m2_dst", 0, 15, E)  P(M2_AMT, "m2_amt", 8192, 16383, B)
+P(M3_SRC, "m3_src", 0, 10, E)  P(M3_DST, "m3_dst", 0, 15, E)  P(M3_AMT, "m3_amt", 8192, 16383, B)
+P(M4_SRC, "m4_src", 0, 10, E)  P(M4_DST, "m4_dst", 0, 15, E)  P(M4_AMT, "m4_amt", 8192, 16383, B)
+P(M5_SRC, "m5_src", 0, 10, E)  P(M5_DST, "m5_dst", 0, 15, E)  P(M5_AMT, "m5_amt", 8192, 16383, B)
+P(M6_SRC, "m6_src", 0, 10, E)  P(M6_DST, "m6_dst", 0, 15, E)  P(M6_AMT, "m6_amt", 8192, 16383, B)
+P(M7_SRC, "m7_src", 0, 10, E)  P(M7_DST, "m7_dst", 0, 15, E)  P(M7_AMT, "m7_amt", 8192, 16383, B)
+P(M8_SRC, "m8_src", 0, 10, E)  P(M8_DST, "m8_dst", 0, 15, E)  P(M8_AMT, "m8_amt", 8192, 16383, B)
+/* voice */
+P(VOICE_MODE,  "voice_mode",      0,     2, E)   /* poly 8, mono, unison */
+P(UNI_VOICES,  "uni_voices",      2,     2, E)   /* 2, 3, 4 */
+P(UNI_DETUNE,  "uni_detune",   3000, 16383, C)   /* 0 .. 50 cents */
+P(UNI_SPREAD,  "uni_spread",  10000, 16383, C)
+P(GLIDE,       "glide",           0, 16383, C)
+P(BEND_RANGE,  "bend_range",      1,     3, E)   /* 1 .. 4 scale degrees */
+P(VEL_AMP,     "vel_amp",      9000, 16383, C)
+/* analog character */
+P(DRIFT,       "drift",           0, 16383, C)   /* 0 .. 10 cents per voice, slow */
+P(VARIANCE,    "variance",     3000, 16383, C)   /* per-voice spread of cutoff and envelope times */
+P(OUT_SAT,     "out_sat",      3000, 16383, C)
+P(VOLUME,      "volume",      13000, 16383, C)
+P(PAN,         "pan",          8192, 16383, B)

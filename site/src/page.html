@@ -1,0 +1,299 @@
+<title>מיקרוטון · Microton</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=Secular+One&display=swap">
+<style>
+/* Layout: the instrument (wheel, 16 white keys, wheels) beside the sound editor, tabbed by section of the voice */
+:root {
+  --bg: #eef1ee; --panel: #f8faf8; --ink: #18201d; --muted: #5a6762; --line: #ccd5d0;
+  --accent: #2c7a69; --accent-soft: #d8ebe5; --brass: #a86f12; --brass-soft: #f4e5c8; --warn: #b23b2e; --ghost: #c3ccc7;
+  --track: #dfe6e2;
+  --f-display: "Secular One", "IBM Plex Sans Hebrew", "Arial Hebrew", sans-serif;
+  --f-body: "IBM Plex Sans Hebrew", "Arial Hebrew", "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111614; --panel: #18201d; --ink: #e3e9e6; --muted: #93a29c; --line: #2c3833;
+    --accent: #5cc0a8; --accent-soft: #1c3a33; --brass: #e2b45c; --brass-soft: #3a2e17; --warn: #ef7c6e; --ghost: #33403b;
+    --track: #24302b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111614; --panel: #18201d; --ink: #e3e9e6; --muted: #93a29c; --line: #2c3833;
+  --accent: #5cc0a8; --accent-soft: #1c3a33; --brass: #e2b45c; --brass-soft: #3a2e17; --warn: #ef7c6e; --ghost: #33403b;
+  --track: #24302b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; }
+h1 { font-family: var(--f-display); font-weight: 400; font-size: 28px; margin: 0; line-height: 1.15; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.led { width: 9px; height: 9px; border-radius: 50%; background: var(--ghost); display: inline-block; }
+.led.on { background: var(--accent); }
+.led.warn { background: var(--warn); }
+h2 { font-size: 13px; font-weight: 600; letter-spacing: .04em; color: var(--muted); margin: 0; }
+h3 { font-size: 14px; font-weight: 600; margin: 4px 0 0; color: var(--ink); }
+.mono, code, .val { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; align-items: start; }
+@media (max-width: 920px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 14px; min-width: 0; }
+.col { display: grid; gap: 18px; min-width: 0; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+.status { font-size: 13px; color: var(--muted); min-height: 1.4em; margin: 0; }
+.status.err { color: var(--warn); }
+button, .btn, select, input[type=search], input[type=number] {
+  font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 6px; min-height: 34px;
+}
+button, .btn { padding: 5px 12px; cursor: pointer; }
+select, input[type=search], input[type=number] { padding: 5px 8px; min-width: 0; }
+button:hover, .btn:hover { border-color: var(--accent); }
+button:focus-visible, .btn:focus-within, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 600; }
+button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.btn { position: relative; display: inline-flex; align-items: center; }
+.btn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* scale chooser */
+.chooser { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.list { max-height: 210px; overflow-y: auto; border-top: 1px solid var(--line); margin: 0; padding: 0; list-style: none; }
+.list li button { width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; text-align: start;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; padding: 6px 4px; min-height: 0; }
+.list li button:hover, .list li button[aria-current="true"] { background: var(--accent-soft); }
+.list .nm { font-family: var(--f-mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .meta { font-size: 12px; color: var(--muted); font-family: var(--f-mono); }
+.list .desc { grid-column: 1 / -1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* wheel and keys */
+.scalehead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 16px; align-items: baseline; }
+.scalehead b { font-family: var(--f-mono); font-weight: 500; font-size: 18px; }
+.wheelrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; }
+#wheel { width: 100%; max-width: 360px; aspect-ratio: 1; justify-self: center; touch-action: none; }
+#wheel .sector { stroke: var(--panel); stroke-width: 1.2; stroke-linejoin: round; }
+#wheel .sector.on { fill: var(--brass); }
+#wheel .rim { fill: none; stroke: var(--line); stroke-width: 1.5; }
+#wheel .hub { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+#wheel .dot { fill: var(--panel); stroke: var(--panel); stroke-width: 1; }
+#wheel .dot.win { fill: var(--accent); }
+#wheel .dot.on { fill: var(--ink); }
+#wheel text { font-family: var(--f-mono); font-size: 11px; fill: var(--muted); pointer-events: none; }
+#wheel .centre { fill: var(--ink); }
+#wheel { cursor: pointer; }
+.wheels { display: flex; gap: 12px; direction: ltr; }
+.wheels label { display: grid; justify-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.wheels input[type=range] { writing-mode: vertical-lr; direction: rtl; width: 34px; height: 150px; accent-color: var(--accent); }
+.keybar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; }
+.keys { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; direction: ltr; touch-action: none; }
+.key { min-height: 88px; padding: 0 0 8px; border-radius: 0 0 6px 6px; border: 1px solid var(--line); background: var(--panel);
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; font-family: var(--f-mono); }
+.key .d { font-size: 13px; font-weight: 500; }
+.key .p { font-size: 10px; color: var(--muted); }
+.key.first { border-bottom: 3px solid var(--accent); }
+.key.on { background: var(--brass-soft); border-color: var(--brass); }
+@media (max-width: 480px) { .key { min-height: 66px; } .key .p { display: none; } .wheels input[type=range] { height: 120px; } }
+
+/* sound editor */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.tabs button { border-color: transparent; background: none; }
+.tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.group { display: grid; gap: 4px; }
+.ctl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) 6.5em; gap: 10px; align-items: center; min-height: 34px; }
+@media (max-width: 480px) { .ctl { grid-template-columns: 7.5em minmax(0, 1fr) 5.5em; gap: 6px; } }
+.ctl label { font-size: 14px; }
+.ctl .val { font-size: 12.5px; color: var(--muted); direction: ltr; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctl input[type=range] { width: 100%; direction: ltr; accent-color: var(--accent); }
+.ctl select { width: 100%; }
+.ctl.changed label::after { content: " •"; color: var(--accent); }
+.modrow { display: grid; grid-template-columns: 1.4em minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+.modrow .n { font-family: var(--f-mono); color: var(--muted); font-size: 13px; }
+.modamt { display: grid; grid-template-columns: minmax(0, 1fr) 6.5em; gap: 8px; align-items: center; grid-column: 2 / -1; margin-bottom: 8px; }
+.modamt input { width: 100%; direction: ltr; accent-color: var(--accent); }
+.modamt .val { font-size: 12.5px; color: var(--muted); direction: ltr; }
+.tune { display: grid; grid-template-columns: auto auto; gap: 8px 12px; align-items: center; justify-content: start; }
+details { border-top: 1px solid var(--line); padding-top: 8px; }
+details > summary { cursor: pointer; font-size: 14px; font-weight: 500; }
+details[open] > summary { margin-bottom: 8px; }
+.tablebox { overflow: auto; max-height: 260px; margin-bottom: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 4px 8px; text-align: start; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; }
+td { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+td input { width: 6em; font-family: var(--f-mono); }
+td.moved { color: var(--brass); }
+/* sequencer */
+.patterns { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 4px; direction: ltr; margin-top: 6px; }
+@media (max-width: 640px) { .patterns { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.patterns button { padding: 4px 0; font-family: var(--f-mono); position: relative; }
+.patterns button.used::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.patterns button.playing { border-color: var(--brass); box-shadow: inset 0 -3px 0 var(--brass); }
+.patterns button.queued { border-style: dashed; border-color: var(--brass); }
+.tracks { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 760px) { .tracks { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.trk { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px; }
+.trk button { padding: 4px 6px; min-height: 32px; font-size: 13px; }
+.trk .name { text-align: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk .ms { font-family: var(--f-mono); width: 2.2em; padding: 0; }
+.trk .ms[aria-pressed="true"] { background: var(--brass-soft); border-color: var(--brass); }
+.steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; direction: ltr; }
+@media (max-width: 640px) { .steps { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.cell { min-height: 64px; padding: 4px 2px; border-radius: 6px; display: grid; align-content: space-between; justify-items: center;
+  font-family: var(--f-mono); font-size: 12px; border: 1px solid var(--line); background: var(--panel); }
+.cell .n { font-size: 10px; color: var(--muted); }
+.cell .d { font-size: 14px; font-weight: 500; }
+.cell .f { font-size: 9.5px; color: var(--muted); min-height: 1.2em; }
+.cell.on { background: var(--accent-soft); border-color: var(--accent); }
+.cell.on .d { color: var(--ink); }
+.cell.sel { box-shadow: 0 0 0 2px var(--accent); }
+.cell.now { border-color: var(--brass); background: var(--brass-soft); }
+.cell.out { opacity: .35; }
+.cell.beat .n { color: var(--ink); }
+.seqcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; align-items: start; }
+.seqcols h3 { margin-bottom: 4px; }
+.mini { display: grid; grid-template-columns: 8.5em minmax(0, 1fr) 4.5em; gap: 8px; align-items: center; min-height: 32px; }
+.mini label { font-size: 13.5px; }
+.mini input[type=range] { width: 100%; direction: ltr; accent-color: var(--accent); }
+.mini .val { font-size: 12.5px; color: var(--muted); direction: ltr; }
+.mini select, .mini input[type=number] { width: 100%; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.tools button { font-size: 13px; padding: 4px 9px; min-height: 30px; }
+.noterow { display: grid; grid-template-columns: 3.5em minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+.lockrow { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 4em 2em; gap: 6px; align-items: center; }
+.lockrow input { width: 100%; direction: ltr; accent-color: var(--accent); }
+.lockrow .val { font-size: 12px; color: var(--muted); direction: ltr; }
+.songrow { display: grid; grid-template-columns: 2em minmax(0, 1fr) minmax(0, 1fr) 2em; gap: 6px; align-items: center; }
+.songrow.now { background: var(--brass-soft); border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>מיקרוטון · Microton</h1>
+    <div class="bar">
+      <button id="audioBtn" class="primary" type="button">הפעלת שמע</button>
+      <span class="pill"><i class="led" id="audioLed"></i><span id="audioState">השמע כבוי</span></span>
+      <label class="pill"><input id="stableBox" type="checkbox"> שמע יציב</label>
+      <span class="pill"><i class="led" id="voiceLed"></i><span id="voiceState" class="mono">0/8</span></span>
+      <button id="midiBtn" type="button">חיבור מידי</button>
+      <select id="midiMap" aria-label="מיפוי מקלדת מידי">
+        <option value="white">מידי: לבנים בלבד, כמו במכשיר</option>
+        <option value="chrom">מידי: כל קליד דרגה</option>
+      </select>
+      <span class="pill" id="midiState"></span>
+    </div>
+  </header>
+
+  <div class="bench">
+    <div class="col">
+      <section class="panel" aria-labelledby="h-play">
+        <h2 id="h-play">נגינה</h2>
+        <div class="scalehead"><b id="sName"></b><span class="note" id="sMeta"></span></div>
+        <div class="wheelrow">
+          <svg id="wheel" viewBox="0 0 400 400" role="img" aria-label="תצוגת עיגול של הסולם"></svg>
+          <div class="wheels">
+            <label>כיפוף<input id="bend" type="range" min="-8192" max="8191" value="0" aria-label="כיפוף בדרגות"></label>
+            <label>מודולציה<input id="wheelIn" type="range" min="0" max="127" value="0" aria-label="גלגל מודולציה"></label>
+          </div>
+        </div>
+        <div class="keybar">
+          <div class="bar">
+            <button id="winDown" type="button" aria-label="הזזת החלון דרגה למטה">החלון ‹</button>
+            <button id="winUp" type="button" aria-label="הזזת החלון דרגה למעלה">› החלון</button>
+            <button id="perDown" type="button" aria-label="מחזור למטה">מחזור −</button>
+            <button id="perUp" type="button" aria-label="מחזור למעלה">מחזור +</button>
+          </div>
+          <span class="note" id="winNote"></span>
+        </div>
+        <div class="keys" id="keys" aria-label="16 הקלידים הלבנים"></div>
+        <p class="note">משמאל לימין כמו במכשיר; קו בתחתית מסמן תחילת מחזור. מקלדת המחשב: <code>Z X C V B N M</code> ואז <code>A S D F G H J K L</code>. הכיפוף חוזר למרכז כשעוזבים.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-scale">
+        <h2 id="h-scale">סולם</h2>
+        <div class="chooser">
+          <input id="q" type="search" placeholder="חיפוש סולם" aria-label="חיפוש סולם">
+          <select id="degFilter" aria-label="מספר דרגות"><option value="">כל מספרי הדרגות</option></select>
+        </div>
+        <ul class="list" id="list"></ul>
+        <div class="bar">
+          <label class="btn">טעינת קבצי סולם או מיפוי<input id="pickFiles" type="file" multiple accept=".scl,.zip,.kbm"></label>
+          <button id="resetLib" type="button">חזרה לדוגמאות</button>
+        </div>
+        <p class="status" id="status" role="status"></p>
+        <div class="tune">
+          <span class="note">מודוס</span>
+          <div class="bar"><button id="modeDown" type="button" aria-label="מודוס קודם">‹</button><b id="modeVal" class="mono">0</b><button id="modeUp" type="button" aria-label="מודוס הבא">›</button></div>
+          <label for="refDeg" class="note">דרגת ייחוס</label>
+          <input id="refDeg" type="number" min="-255" max="255" step="1" value="0" class="mono" style="width: 5em">
+          <label for="ref" class="note">בתדר, הרץ</label>
+          <input id="ref" type="number" min="1" max="20000" step="0.01" value="261.63" class="mono" style="width: 7em">
+        </div>
+        <details id="edoBox">
+          <summary>חלוקה שווה של מחזור</summary>
+          <div class="bar">
+            <label for="edoN" class="note">צעדים</label><input id="edoN" type="number" min="1" max="255" value="19" class="mono" style="width: 5em">
+            <label for="edoP" class="note">מחזור</label><input id="edoP" type="text" value="2/1" class="mono" style="width: 6em" dir="ltr">
+            <button id="edoBtn" type="button">יצירה</button>
+          </div>
+          <p class="note">מחזור כיחס, למשל <code>3/1</code>, או בסנטים, למשל <code>1200</code>.</p>
+        </details>
+        <details id="fineBox">
+          <summary>כוונון עדין של דרגות</summary>
+          <div class="tablebox"><table><thead><tr><th>דרגה</th><th>סנטים</th><th>הזזה בסנטים</th></tr></thead><tbody id="fineBody"></tbody></table></div>
+          <button id="fineClear" type="button">איפוס הכוונון העדין</button>
+        </details>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="h-sound">
+      <div class="bar" style="justify-content: space-between">
+        <h2 id="h-sound">צליל</h2>
+        <div class="bar" id="partTabs" role="group" aria-label="איזה צליל">
+          <button type="button" aria-pressed="true">צליל 1</button><button type="button" aria-pressed="false">צליל 2</button><button type="button" aria-pressed="false">צליל 3</button>
+        </div>
+        <div class="bar">
+          <button id="resetBtn" type="button">צליל ברירת מחדל</button>
+        </div>
+      </div>
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div id="tabBody"></div>
+      <p class="note">לחיצה כפולה על מחוון מחזירה אותו לברירת המחדל. כל פרמטר מקבל גם הודעת מידי לפי המספר שלו ברשימה.</p>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="h-seq">
+    <div class="bar" style="justify-content: space-between">
+      <h2 id="h-seq">סיקוונסר</h2>
+      <div class="bar">
+        <button id="playBtn" class="primary" type="button">ניגון</button>
+        <label class="note" for="tempo">טמפו</label>
+        <input id="tempo" type="number" min="30" max="300" step="0.1" value="120" class="mono" style="width: 5.5em">
+        <button id="songBtn" type="button" aria-pressed="false">מצב שיר</button>
+        <button id="recBtn" type="button" aria-pressed="false">הקלטה חיה</button>
+        <button id="stepRecBtn" type="button" aria-pressed="false">כתיבת צעדים</button>
+        <button id="undoBtn" type="button">ביטול פעולה</button>
+      </div>
+    </div>
+    <div>
+      <span class="note">פטרן</span>
+      <div class="patterns" id="patterns" role="group" aria-label="פטרנים"></div>
+    </div>
+    <div class="tracks" id="tracks" role="group" aria-label="רצועות"></div>
+    <div class="bar" style="justify-content: space-between">
+      <div class="bar" id="pages" role="group" aria-label="עמוד צעדים"></div>
+      <span class="note" id="seqNote"></span>
+    </div>
+    <div class="steps" id="steps" aria-label="16 הצעדים של העמוד"></div>
+    <div class="seqcols">
+      <div class="group" id="stepEd"></div>
+      <div class="group" id="trackEd"></div>
+      <div class="group" id="songEd"></div>
+    </div>
+  </section>
+</div>
