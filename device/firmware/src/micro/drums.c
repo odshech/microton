@@ -8,14 +8,15 @@
  *     envelope (a fast sweep, then the tone);
  *   - three operators: operator 2 with feedback modulates operator 1, which modulates the carrier; both indices
  *     follow the modulation envelope;
- *   - the models: KICK a pure sine (and a breath of noise), SNARE the FM tone and band-passed noise, HAT and METAL
+ *   - the models: KICK a sine with a short FM click and its own drive (our addition; the original: a pure sine), SNARE the FM tone and band-passed noise, HAT and METAL
  *     high-passed noise, PERC the FM tone ring-modulated by noise;
  *   - a DC blocker, the level and the drive, and at the end of the drum bus a soft saturation y / (1 + |y|).
  * The per-sample constants of the original are converted to 44.1 kHz (tables.h, tools/gen_tables.py), so a
  * setting sounds the same here. Decay 0..100 is the original's range; 101..127 go on to longer sounds.
  * Each drum is one voice: a new hit restarts it. Drums in the same choke group cut each other. */
 
-#define CLAP_BLOCKS 26u                     /* ~9.4 ms between clap bursts */
+static const uint8_t CLAP_GAP[3] = {22, 30, 26};   /* blocks between a clap's bursts: 8, 11, 9.4 ms (uneven, as hands) */
+#define CLAP_BURST_DECAY 93u                /* each burst short; the last one rings at the set decay */
 #define INC_PITCH 46748u                    /* the phase increment of 0.48 Hz (1 % of 48 Hz) at 44.1 kHz */
 #define INC_SWEEP 389566u                   /* of 4 Hz (one step of sweep) */
 #define RAD_Q12 166886u                     /* 2^32 / (2 pi), for a phase offset in radians Q12 */
@@ -37,20 +38,20 @@ static const uint16_t DP_MAX[DP_COUNT] = {
  * two toms and a rim */
 static const uint16_t DKIT[ENG_DRUMS][DP_COUNT] = {
 /* model pitch sweep decay op1 op2 r1  r2  fb  noise drive level pan   rev   dly  choke clap */
-  { 0,   100,  80,  108,  50, 60, 10, 20,  0,  10,   30,  100,  8192, 0,    0,    0,    0 },
-  { 1,   120,  50,  101,  60, 50, 20, 15, 10,  60,   40,   90,  8192, 2600, 0,    0,    0 },
+  { 0,   120,  80,  110,  70,  0, 60,  0,  0,   6,  140,  100,  8192, 0,    0,    0,    0 },   /* kick: 58 Hz, a beater click, driven */
+  { 1,   380,  45,  101,  60, 50, 15, 15, 10,  20,   80,  100,  8192, 2600, 0,    0,    0 },   /* snare: 180 Hz body, less noise */
   { 2,   140,  10,   99,  40, 45, 50, 80, 30,  80,   20,   80,  9600, 1200, 0,    1,    0 },
   { 3,    90,  10,  110,  30, 40, 60, 90, 50,  80,   20,   85,  9600, 2400, 2000, 1,    0 },
-  { 1,    10,   0,  100,   0,  0, 10, 10,  0, 100,   30,   95,  7400, 4200, 0,    0,    3 },
-  { 0,   200,  60,  108,  50, 60, 10, 20,  0,   5,   20,   90,  6200, 2000, 0,    0,    0 },
-  { 0,   300,  60,  106,  50, 60, 10, 20,  0,   5,   20,   85,  10200, 2000, 0,   0,    0 },
-  { 4,   500,  20,   98,  40, 20, 35, 20, 20,  60,   30,   80,  8192, 1800, 0,    0,    0 },
+  { 1,    10,   0,  103,   0,  0, 10, 10,  0, 100,   35,  100,  7400, 4200, 0,    0,    3 },   /* clap: uneven bursts, a tail */
+  { 0,   200,  60,  108,  30,  0, 20,  0,  0,   5,   60,   40,  6200, 2000, 0,    0,    0 },
+  { 0,   300,  60,  106,  30,  0, 20,  0,  0,   5,   60,   38,  10200, 2000, 0,   0,    0 },
+  { 1,  1000,  30,   96,  40, 10, 35, 50,  0,  10,   80,   90,  8192, 1800, 0,    0,    0 },   /* rim: 480 Hz wood, 1.7 kHz ring */
 };
 
 typedef struct {
     uint32_t model, inc, sweep, inc1, inc2;         /* increments: base, the sweep at full, operators 1 and 2 */
     uint32_t dec, decm;                             /* per-sample envelope factors, Q30 */
-    int32_t i1, i2, fb, noise, gain, gl, gr, rev, dly, choke, clap;
+    int32_t i1, i2, fb, noise, gain, gl, gr, rev, dly, choke, clap, kdrv;
 } dderived_t;
 typedef struct {
     uint32_t pc, p1, p2;                            /* phases: carrier, operators */
@@ -85,7 +86,13 @@ static void drum_derive(uint32_t d)
     X->fb = (int32_t)R[DP_FEEDBACK] * 655;                              /* x 2, Q15 */
     X->noise = (int32_t)R[DP_NOISE] * 655;                              /* x 2, Q15 */
     /* level x (1 + drive / 20) x 0.2 (the mix) x the bus gain, Q15 (the voice's 0.45 is in drums_run) */
-    X->gain = (int32_t)((32768u * R[DP_LEVEL] * (20u + R[DP_DRIVE]) * DRUM_BUS_GAIN) / (100u * 20u * 5u));
+    if (X->model == DM_KICK) {                                          /* the kick's drive shapes its own sine */
+        X->kdrv = (int32_t)R[DP_DRIVE] * 8192 / 10;                     /* x (1 + drive / 40) at the peak's knee */
+        X->gain = (int32_t)((32768u * R[DP_LEVEL] * DRUM_BUS_GAIN * 7u) / (100u * 5u));
+    } else {
+        X->kdrv = 0;
+        X->gain = (int32_t)((32768u * R[DP_LEVEL] * (20u + R[DP_DRIVE]) * DRUM_BUS_GAIN) / (100u * 20u * 5u));
+    }
     {
         int32_t pan = (int32_t)R[DP_PAN] * 4 - 32768;
         uint32_t ang = (uint32_t)(pan + 32768) << 14;
@@ -128,7 +135,7 @@ static void drum_hit(uint32_t d, int32_t vel)
     v = &DV[d];
     v->em = v->emod = ONE_Q30;                                          /* the gate: both envelopes to 1 */
     v->vel = vel < 1 ? 1 : vel > 127 ? 127 : vel;
-    v->bursts = DD[d].clap; v->btimer = CLAP_BLOCKS;
+    v->bursts = DD[d].clap; v->btimer = CLAP_GAP[0];
     if (!v->on) { v->sm = 0; v->pc = v->p1 = v->p2 = 0; v->last2 = 0; v->hp = v->bp1 = v->bp2 = v->dcx = v->dcy = v->nl1 = v->nl2 = v->nl3 = 0; }
     v->on = 1;
 }
@@ -147,7 +154,10 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
         int32_t g, gl, gr, rv, dl, em, emod, sm, last2, hp, bp1, bp2, dcx, dcy, nl1, nl2, nl3;
         uint32_t pc, p1, p2;
         if (!v->on) continue;
-        if (v->bursts > 0 && --v->btimer == 0) { v->em = ONE_Q30; v->bursts--; v->btimer = CLAP_BLOCKS; }
+        if (v->bursts > 0 && --v->btimer == 0) {
+            v->em = ONE_Q30; v->bursts--;
+            v->btimer = CLAP_GAP[(X->clap - v->bursts) % 3];
+        }
         if (v->em < (ONE_Q30 >> 16) && v->sm < (ONE_Q30 >> 16) && v->bursts == 0) { v->on = 0; continue; }
         any = 1;
         g = m15(X->gain, 8192 + (v->vel * 24576) / 127);               /* velocity */
@@ -165,7 +175,14 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
             nz = m15(nl3 + (nl3 >> 1), X->noise);                       /* noise x 2 x level: up to +-2 */
             pc += X->inc + (uint32_t)(((u64)(uint32_t)m15(e15, e15) * X->sweep) >> 15);   /* the sweep: env^2 */
             if (X->model == DM_KICK) {
-                out1 = sine(pc) + m15(m15(nz, e15), 983);               /* + noise x env x 0.03 */
+                /* the sine, struck: operator 1 bends it for the first milliseconds only (index x env^4: the
+                 * beater's click), then the drive rounds it toward a square (harmonics a small speaker can play) */
+                int32_t e2 = m15(e15, e15), c, a;
+                p1 += X->inc1;
+                c = sine(pc + (uint32_t)m15(m15(sine(p1), X->i1), m15(e2, e2)) * RAD_Q12);
+                a = c < 0 ? -c : c;
+                c = (c * ((32768 + X->kdrv) >> 4)) / ((32768 + ((a * (X->kdrv >> 4)) >> 11)) >> 4);   /* 32-bit */
+                out1 = c + m15(m15(nz, e15), 983);                      /* + noise x env x 0.03 */
             } else {
                 int32_t m2, m1, fm;
                 p2 += X->inc2;
@@ -192,7 +209,7 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
             dbus[2 * i + 1] += m15(y, gr);
             rev[i] += m15(y, rv);
             dly[i] += m15(y, dl);
-            em = (int32_t)(((i64)em * X->dec) >> 30);
+            em = (int32_t)(((i64)em * (v->bursts > 0 ? DRUM_DEC_Q30[CLAP_BURST_DECAY] : X->dec)) >> 30);
             emod = (int32_t)(((i64)emod * X->decm) >> 30);
         }
         v->em = em; v->emod = emod; v->sm = sm; v->last2 = last2;
@@ -201,11 +218,11 @@ static void drums_run(int32_t *out, int32_t *rev, int32_t *dly)
     }
     if (!any) return;
     for (i = 0; i < 2u * ENG_BLOCK; i++) {                              /* the bus' soft saturation: y / (1 + |y|) */
-        int32_t y = dbus[i], a;
+        int32_t y = dbus[i] >> 1, a;                                    /* Q14: up to 4 into the curve */
         if (y > 65535) y = 65535;
         if (y < -65535) y = -65535;
         a = y < 0 ? -y : y;
-        out[i] += ((y * 32768) / (32768 + a)) * 32000 / 32768;
+        out[i] += ((y * 32768) / (16384 + a)) * 32000 / 32768;
     }
 }
 

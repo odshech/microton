@@ -639,8 +639,25 @@
   /* held: what is pressed now; sounding: what the engine was told. A key let go while the audio is still
    * starting never sends its note at all, so nothing can stick. */
   const held = new Map(), sounding = new Map();  /* source id → absolute degree */
+  /* Hold latches, as on the FM-1: a key pressed while it is on starts a note that keeps sounding, pressed again it
+   * stops it. Turning Hold off releases the latched notes. */
+  let holdOn = false;
+  const latched = new Map();                    /* absolute degree → part */
+  function setHold(on) {
+    holdOn = on; $('holdBtn').setAttribute('aria-pressed', String(on));
+    if (!on) { for (const [abs, part] of latched) if (![...sounding.values()].some(x => x.abs === abs && x.part === part)) send({ t: 'off', part, d: abs }); latched.clear(); }
+    refreshLights();
+  }
   async function press(id, abs, vel = 100) {
     if (held.has(id)) return;
+    if (holdOn) {
+      held.set(id, abs);
+      if (!node) await startAudio();
+      if (latched.has(abs)) { send({ t: 'off', part: latched.get(abs), d: abs }); latched.delete(abs); }
+      else { const pt = playPart(); latched.set(abs, pt); send({ t: 'on', part: pt, d: abs, v: vel }); recordNote(abs, vel); }
+      refreshLights();
+      return;
+    }
     held.set(id, abs); refreshLights();
     if (!node) await startAudio();
     if (held.get(id) !== abs || sounding.has(id)) return;
@@ -653,17 +670,17 @@
     held.delete(id);
     if (sounding.has(id)) {
       const sn = sounding.get(id); sounding.delete(id);
-      if (![...sounding.values()].some(x => x.abs === sn.abs && x.part === sn.part)) send({ t: 'off', part: sn.part, d: sn.abs });
+      if (![...sounding.values()].some(x => x.abs === sn.abs && x.part === sn.part) && latched.get(sn.abs) !== sn.part) send({ t: 'off', part: sn.part, d: sn.abs });
     }
     refreshLights();
   }
-  function releaseAll() { held.clear(); sounding.clear(); send({ t: 'all' }); refreshLights(); }
+  function releaseAll() { held.clear(); sounding.clear(); latched.clear(); send({ t: 'all' }); refreshLights(); }
   function refreshLights() {
     if (!cents.length) return;
-    const n = nDeg(), on = new Set([...held.values()].map(a => mod(a, n)));
+    const n = nDeg(), on = new Set([...held.values(), ...latched.keys()].map(a => mod(a, n)));
     document.querySelectorAll('#wheel g[data-deg]').forEach(g => { const d = +g.dataset.deg;
       g.querySelector('.sector').classList.toggle('on', on.has(d)); g.querySelector('.dot').classList.toggle('on', on.has(d)); });
-    const absOn = new Set(held.values());
+    const absOn = new Set([...held.values(), ...latched.keys()]);
     document.querySelectorAll('.key').forEach(k => k.classList.toggle('on', absOn.has(winStart + +k.dataset.j)));
   }
   function renderKeys() {
@@ -687,6 +704,7 @@
   $('winUp').addEventListener('click', () => shift(1));
   $('perDown').addEventListener('click', () => shift(-nDeg()));
   $('perUp').addEventListener('click', () => shift(nDeg()));
+  $('holdBtn').addEventListener('click', () => setHold(!holdOn));
 
   const KEYMAP = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK', 'KeyL'];
   window.addEventListener('keydown', e => {

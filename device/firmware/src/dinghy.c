@@ -63,7 +63,7 @@ static void app_audio(int32_t *out, uint32_t n)
 /* ---- state (main loop) */
 static uint32_t scale_i = 3;                    /* in LIB_ORDER: 22-EDO */
 static int32_t win = 0;                         /* the first degree on the white keys */
-static int hold, stress, playing_seq;
+static int hold, stress, playing_seq, hold_shown = -1;     /* hold_shown: what the title shows (CC 64 redraws) */
 static int32_t key_deg[27];                     /* the degree each key started */
 static uint8_t held_deg[256];                   /* degrees sounding from the keys (mod n), for the wheel */
 static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
@@ -214,7 +214,7 @@ static void draw_scale(void)
     p = b;
     p = putn(p, tun_degrees()); p = put(p, " DEG  MODE "); p = putn(p, (uint32_t)tun_mode());
     p = put(p, "  WIN "); if (win < 0) *p++ = '-'; p = putn(p, (uint32_t)(win < 0 ? -win : win));
-    if (hold) p = put(p, "  HOLD");
+    if (hold) { p = put(p, "  HOLD "); p = putn(p, nlat); }        /* the drone's notes */
     *p = 0;
     draw_line(170, b, M_DIM);
 }
@@ -257,28 +257,50 @@ static void draw_load(uint32_t avg, uint32_t peak)
 }
 
 /* ---- notes from the keys and from MIDI */
-static void note_on(int32_t deg, uint32_t vel)
+/* HOLD (black key 5, or the sustain pedal, CC 64) latches: each key pressed while it is on starts its note and
+ * leaves it sounding; pressed again, the note stops. A chord stays as a drone, and notes join or leave it one by
+ * one. HOLD off releases the latched notes (keys still down keep sounding). */
+#define LAT_MAX 8u                                  /* as many as the part has voices */
+static int32_t lat[LAT_MAX];
+static uint32_t nlat;
+static void sound_on(int32_t deg, uint32_t vel) { eng_note_on(0, deg, vel); held_deg[imod(deg, (int32_t)tun_degrees())]++; }
+static void sound_off(int32_t deg)
 {
-    uint32_t n = tun_degrees();
-    eng_note_on(0, deg, vel);
-    held_deg[imod(deg, (int32_t)n)]++;
-}
-static void note_off(int32_t deg)
-{
-    uint32_t n = tun_degrees(), m = (uint32_t)imod(deg, (int32_t)n);
-    if (hold) return;
+    uint32_t m = (uint32_t)imod(deg, (int32_t)tun_degrees());
     eng_note_off(0, deg);
     if (held_deg[m]) held_deg[m]--;
+}
+/* returns 1 when the press was a latch toggle: its release is then ignored */
+static int note_on(int32_t deg, uint32_t vel)
+{
+    uint32_t i;
+    if (!hold) { sound_on(deg, vel); return 0; }
+    for (i = 0; i < nlat; i++)
+        if (lat[i] == deg) { sound_off(deg); lat[i] = lat[--nlat]; return 1; }   /* again: out of the drone */
+    if (nlat == LAT_MAX) { sound_off(lat[0]); for (i = 1; i < nlat; i++) lat[i - 1] = lat[i]; nlat--; }  /* the oldest leaves */
+    lat[nlat++] = deg;
+    sound_on(deg, vel);
+    return 1;
+}
+static void note_off(int32_t deg) { sound_off(deg); }
+static void hold_set(int on)
+{
+    if (on == hold) return;
+    hold = on;
+    if (!on) { while (nlat) sound_off(lat[--nlat]); }
 }
 static void all_off(void)
 {
     uint32_t i;
     eng_all_off();
     for (i = 0; i < 256u; i++) held_deg[i] = 0;
+    nlat = 0;
 }
 
 static uint32_t idle_ok;
 static int32_t midi_deg[128];
+static uint8_t midi_lat[128];                   /* the press was a latch toggle: ignore its release */
+static uint8_t key_lat[27];
 static uint8_t nrpn_msb = 127, nrpn_lsb = 127, nrpn_dm;
 static int32_t white_index(uint32_t note)       /* C4 (60) = 0; black keys: -1000 */
 {
@@ -293,8 +315,11 @@ static void midi_in(void)
         uint32_t ty = st & 0xF0u;
         if (ty == 0x90u && d2) {
             int32_t w = white_index(d1);
-            if (w > -1000 && d1 < 128u) { midi_deg[d1] = win + w; note_on(midi_deg[d1], d2); }
-        } else if ((ty == 0x80u || ty == 0x90u) && d1 < 128u && white_index(d1) > -1000) note_off(midi_deg[d1]);
+            if (w > -1000 && d1 < 128u) { midi_deg[d1] = win + w; midi_lat[d1] = (uint8_t)note_on(midi_deg[d1], d2); }
+        } else if ((ty == 0x80u || ty == 0x90u) && d1 < 128u && white_index(d1) > -1000) {
+            if (!midi_lat[d1]) note_off(midi_deg[d1]);
+            midi_lat[d1] = 0;
+        }
         else if (ty == 0xE0u) eng_bend(0, (int32_t)((uint32_t)d2 << 7 | d1) - 8192);
         else if (ty == 0xD0u) eng_aftertouch(0, d1);
         else if (ty == 0xB0u) {
@@ -305,7 +330,8 @@ static void midi_in(void)
                 uint32_t id = (uint32_t)nrpn_msb << 7 | nrpn_lsb;
                 if (d1 == 6u) nrpn_dm = d2;
                 if (id < P_COUNT) eng_set_param(0, id, d1 == 6u ? (uint32_t)d2 << 7 : (uint32_t)nrpn_dm << 7 | d2);
-            } else if (d1 == 123u) all_off();
+            } else if (d1 == 64u) { hold_set(d2 >= 64u); }
+            else if (d1 == 123u) all_off();
         }
     }
 }
@@ -360,14 +386,14 @@ static void app_main(void)
                     if (w < 8) { eng_drum_hit((uint32_t)w, 110); if (pg_drum != (uint32_t)w) { pg_drum = (uint32_t)w; panel_dirty = 1; } }
                     key_deg[k] = 0x7FFFFFFF;
                 }
-                else if (w >= 0) { key_deg[k] = win + w; note_on(key_deg[k], 100); wheel_dirty = 1; }
+                else if (w >= 0) { key_deg[k] = win + w; key_lat[k] = (uint8_t)note_on(key_deg[k], 100); wheel_dirty = 1; }
                 else if ((bk = key_black(k)) >= 0) {
                     switch (bk) {
                     case 0: win--; break;
                     case 1: win++; break;
                     case 2: win -= (int32_t)n; break;
                     case 3: win += (int32_t)n; break;
-                    case 4: hold = !hold; if (!hold) all_off(); break;
+                    case 4: hold_set(!hold); break;
                     case 6: all_off(); tun_rotate(tun_mode() - 1); break;
                     case 7: all_off(); tun_rotate(tun_mode() + 1); break;
                     case 8: all_off(); scale_i = (scale_i + sizeof LIB_ORDER - 1u) % sizeof LIB_ORDER; scale_load(); win = 0; break;
@@ -378,7 +404,11 @@ static void app_main(void)
                     scale_dirty = wheel_dirty = 1;
                 }
             }
-            if (up >> k & 1u && w >= 0 && key_deg[k] != 0x7FFFFFFF) { note_off(key_deg[k]); wheel_dirty = 1; }
+            if (up >> k & 1u && w >= 0 && key_deg[k] != 0x7FFFFFFF) {
+                if (!key_lat[k]) note_off(key_deg[k]);
+                key_lat[k] = 0;
+                wheel_dirty = 1;
+            }
         }
 
         /* buttons */
@@ -473,6 +503,7 @@ static void app_main(void)
         if (sq_open) { if (seq_dirty) { seq_dirty = 0; draw_seqpage(); } else draw_seqcells(); wheel_dirty = 0; }
         else if (pg >= 0) { if (panel_dirty) { panel_dirty = 0; draw_panel(); } wheel_dirty = 0; }
         else if (wheel_dirty) { wheel_dirty = 0; draw_wheel(); }
+        if (hold * 16 + (int)nlat != hold_shown) { hold_shown = hold * 16 + (int)nlat; scale_dirty = 1; }
         if (scale_dirty) { scale_dirty = 0; if (pg < 0 && !sq_open) draw_scale(); }
         if (fm1_ms - t_draw > 100u) {
             uint32_t v = eng_voices_active(), sq = (uint32_t)playing_seq | (uint32_t)stress << 1 | (uint32_t)(pg + 1) << 2 | seq_tempo() << 6;

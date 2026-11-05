@@ -11,10 +11,10 @@ D(OP1_RATIO,  "op1_ratio",    200, C)   /* x 0.1: 0 .. 20 */
 D(OP2_RATIO,  "op2_ratio",    200, C)   /* x 0.1 */
 D(FEEDBACK,   "feedback",     100, C)   /* operator 2 on itself */
 D(NOISE,      "noise",        100, C)
-D(DRIVE,      "drive",        100, C)   /* gain into the drum bus' saturation: x1 .. x6 */
+D(DRIVE,      "drive",        200, C)   /* gain into the drum bus' saturation: x1 .. x11 (100 = the original's top) */
 D(LEVEL,      "level",        100, C)
 D(PAN,        "pan",        16383, B)
 D(REV,        "rev",        16383, C)   /* send to the reverb */
 D(DLY,        "dly",        16383, C)   /* send to the delay */
 D(CHOKE,      "choke",          2, E)   /* group: drums of the same group cut each other */
-D(CLAP,       "clap",           3, E)   /* extra bursts, ~9 ms apart */
+D(CLAP,       "clap",           3, E)   /* extra bursts, 8 .. 11 ms apart (uneven, as hands) */
