@@ -1,0 +1,8 @@
+loader: image 10480 B at 0x1c0a800, bss end 0x1c0ff50
+loader: ota.bin 9063 B
+  ok    .ram_text: 916 insns, no calls
+  ok    image 113280 B of 581564; RAM .data+.bss 57828 B of 98304; pool 308760 B of 344064
+  ok    register access: hal/ only (src/, loader/ clean)
+app      /home/runner/work/microton/microton/device/build/dinghy.bin  113280 B
+loader   /home/runner/work/microton/microton/device/build/loader/ota.bin  9063 B
+package  /home/runner/work/microton/microton/device/build/dinghy.fwsc  612219 B, identity FM-1_950
