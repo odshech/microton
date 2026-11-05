@@ -1,25 +1,20 @@
-/* The drum parameters, once. D(id, key, max, kind): kind C continuous 0..16383, B bipolar (8192 = centre),
- * E a choice 0..max. The kit's values are in drums.c (DKIT). Order = the NRPN numbers above the synth's: append only. */
-D(TUNE,       "tune",       16383, C)   /* 20 Hz .. 5 kHz */
-D(PITCH_AMT,  "pitch_amt",  16383, C)   /* the pitch sweep: 0 .. 4 octaves above the tune, falling */
-D(PITCH_DEC,  "pitch_dec",  16383, C)
-D(RATIO,      "ratio",         15, E)   /* the modulator: 0.5 1 1.5 2 2.5 3 4 5 6 7 1.41 2.76 3.14 5.19 7.13 14 */
-D(FM,         "fm",         16383, C)   /* the index: 0 .. 4 pi */
-D(FM_DEC,     "fm_dec",     16383, C)
-D(FEEDBACK,   "feedback",   16383, C)   /* the modulator on itself: towards noise */
-D(NOISE,      "noise",      16383, C)
-D(NOISE_CUT,  "noise_cut",  16383, C)   /* the noise filter: 100 Hz .. 16 kHz */
-D(NOISE_DEC,  "noise_dec",  16383, C)
-D(DECAY,      "decay",      16383, C)   /* the tone's decay */
-D(CLAP,       "clap",           3, E)   /* extra noise bursts, ~9 ms apart */
-D(DRIVE,      "drive",      16383, C)
-D(LEVEL,      "level",      16383, C)
+/* The drum parameters, once. D(id, key, max, kind): C continuous 0..max, B bipolar (8192 = centre), E a choice 0..max.
+ * The model and its ranges follow the fmdrum voice the drums are ported from (its units: %, its x10 ratios).
+ * The kit's values are in drums.c (DKIT). */
+D(MODEL,      "model",          4, E)   /* kick, snare, hat, metal, perc */
+D(PITCH,      "pitch",        800, C)   /* % of 48 Hz: 10 .. 800 (4.8 .. 384 Hz) */
+D(SWEEP,      "sweep",        100, C)   /* the pitch drop: up to 400 Hz above, falling with the square of its envelope */
+D(DECAY,      "decay",        127, C)   /* 0..100 as in the original (short), 101..127 longer */
+D(OP1_INDEX,  "op1_index",    100, C)   /* operator 1 into the carrier: 0 .. 22.5 radians */
+D(OP2_INDEX,  "op2_index",    100, C)   /* operator 2 into operator 1: 0 .. 10 radians */
+D(OP1_RATIO,  "op1_ratio",    200, C)   /* x 0.1: 0 .. 20 */
+D(OP2_RATIO,  "op2_ratio",    200, C)   /* x 0.1 */
+D(FEEDBACK,   "feedback",     100, C)   /* operator 2 on itself */
+D(NOISE,      "noise",        100, C)
+D(DRIVE,      "drive",        100, C)   /* gain into the drum bus' saturation: x1 .. x6 */
+D(LEVEL,      "level",        100, C)
 D(PAN,        "pan",        16383, B)
 D(REV,        "rev",        16383, C)   /* send to the reverb */
 D(DLY,        "dly",        16383, C)   /* send to the delay */
 D(CHOKE,      "choke",          2, E)   /* group: drums of the same group cut each other */
-D(NOISE_MODE, "noise_mode",     2, E)   /* the noise filter: low-pass, band-pass, high-pass */
-D(NOISE_RESO, "noise_reso", 16383, C)
-D(METAL,      "metal",      16383, C)   /* six square waves at the 808's ratios, from the tune: into the noise filter */
-D(TONE,       "tone",       16383, C)   /* the FM voice's level */
-D(HOLD,       "hold",       16383, C)   /* the tone holds full before it decays: 0 .. 200 ms (punch) */
+D(CLAP,       "clap",           3, E)   /* extra bursts, ~9 ms apart */

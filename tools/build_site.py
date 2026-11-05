@@ -9,13 +9,14 @@ codec = rd('tools', 'scl-codec.js')
 params = rd('site', 'params.json')
 drums = rd('site', 'drums.json')
 fx = rd('site', 'fx.json')
+scales = rd('site', 'scales.json')
 wasm = base64.b64encode(open(os.path.join(root, 'site', 'engine.wasm'), 'rb').read()).decode()
 worklet = rd('site', 'src', 'worklet.js')
 app = rd('site', 'src', 'app.js')
 scripts = '\n'.join([
     '<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>',
     '<script>\n' + codec + '\n</script>',
-    '<script>\nwindow.FM1_PARAMS = ' + params + ';\nwindow.FM1_DRUMS = ' + drums + ';\nwindow.FM1_FX = ' + fx + ';\nwindow.FM1_WASM_B64 = "' + wasm + '";\nwindow.FM1_WORKLET = ' + json.dumps(worklet) + ';\n</script>',
+    '<script>\nwindow.FM1_PARAMS = ' + params + ';\nwindow.FM1_DRUMS = ' + drums + ';\nwindow.FM1_FX = ' + fx + ';\nwindow.FM1_SCALES = ' + scales + ';\nwindow.FM1_WASM_B64 = "' + wasm + '";\nwindow.FM1_WORKLET = ' + json.dumps(worklet) + ';\n</script>',
     '<script>\n' + app + '\n</script>',
 ])
 body = page + '\n' + scripts + '\n'

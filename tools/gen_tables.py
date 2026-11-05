@@ -44,6 +44,17 @@ for i in range(257):
     tg.append(round(math.tan(math.pi * f / FS) * 65536))
 table('uint32_t', 'SVF_G_Q16', tg, comment='tan(pi f / FS), Q16, f = 8.18 Hz * 2^(64 i / 1200), at most 18 kHz')
 
+# the drums (a port of an fmdrum model written for 32 kHz): per-sample decay coefficients converted to FS.
+# decay 0..100 as in the original (0.9 + d/100 * 0.0995 per sample at 32 kHz), 101..127 longer still.
+R32 = 32000.0 / FS
+dd, ddm = [], []
+for d in range(128):
+    c = 0.9 + d / 100 * 0.0995 if d <= 100 else 1 - 0.0005 * 2 ** (-(d - 100) / 9)
+    dd.append(round(c ** R32 * (1 << 30)))
+    ddm.append(round((c * 0.99) ** R32 * (1 << 30)))
+table('uint32_t', 'DRUM_DEC_Q30', dd, comment='the main envelope per sample, Q30 (decay 0..127)')
+table('uint32_t', 'DRUM_DECM_Q30', ddm, comment='the modulation envelope per sample (x 0.99 at 32 kHz), Q30')
+
 # times: raw 0..16383 → 1 ms .. 20 s (exponential); a one-pole coefficient per control tick, Q30
 def time_s(r): return 0.001 * (20000 ** (r / 16383))
 coef = []

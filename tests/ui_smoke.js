@@ -71,6 +71,7 @@ process.on('unhandledRejection', e => { errors++; console.log('REJECTION', e); }
 window.FM1_PARAMS = JSON.parse(fs.readFileSync(path.join(root, 'site/params.json'), 'utf8'));
 window.FM1_DRUMS = JSON.parse(fs.readFileSync(path.join(root, 'site/drums.json'), 'utf8'));
 window.FM1_FX = JSON.parse(fs.readFileSync(path.join(root, 'site/fx.json'), 'utf8'));
+window.FM1_SCALES = JSON.parse(fs.readFileSync(path.join(root, 'site/scales.json'), 'utf8'));
 window.FM1_WASM_B64 = fs.readFileSync(path.join(root, 'site/engine.wasm')).toString('base64');
 window.FM1_WORKLET = fs.readFileSync(path.join(root, 'site/src/worklet.js'), 'utf8');
 require(path.join(root, 'tools/scl-codec.js')); window.SclCodec = globalThis.SclCodec || require(path.join(root, 'tools/scl-codec.js'));
@@ -172,8 +173,9 @@ check('load', () => eval(fs.readFileSync(path.join(root, 'site/src/app.js'), 'ut
     for (let i = 0; i < 200; i++) render();                        /* quiet first */
     const pads = byId.get('pads').children.slice();
     if (pads.length !== 8) throw new Error('pads: ' + pads.length);
-    pads[0].fire('pointerdown', { preventDefault() {} });
-    let pk = 0; for (let i = 0; i < 6; i++) { render(); for (const v of L) pk = Math.max(pk, Math.abs(v)); }
+    const before = posted.length; pads[0].fire('pointerdown', { preventDefault() {} });
+    if (process.env.DEBUG) console.log(JSON.stringify(posted.slice(before)), JSON.stringify(posted.filter(m => m.f === 'eng_drum_set' && m.a[0] === 0).slice(-17).map(m => m.a)));
+    let pk = 0; for (let i = 0; i < 30; i++) { render(); for (const v of L) pk = Math.max(pk, Math.abs(v)); }
     console.log('kick peak:', pk.toFixed(3));
     if (!(pk > 0.05)) throw new Error('the kick pad is silent');
     const tabs = byId.get('kitTabs').children.slice(); tabs[1].fire('click');
@@ -183,7 +185,7 @@ check('load', () => eval(fs.readFileSync(path.join(root, 'site/src/app.js'), 'ut
     byId.get('kitResetBtn').fire('click');
     byId.get('kitTabs').children[0].fire('click');
     byId.get('pads').children[3].fire('pointerdown', { preventDefault() {} });
-    const tune = byId.get('k-tune'); tune.value = '9000'; tune.fire('input');
+    const tune = byId.get('k-pitch'); tune.value = '300'; tune.fire('input');
   });
   /* (in the fallback the messages go straight into the engine; the sound above shows they arrived) */
   console.log(errors ? `${errors} problems` : 'ui smoke: ok');

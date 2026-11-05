@@ -30,6 +30,7 @@ clang $CFLAGS \
   -Wl,--export=eng_drum_hit -Wl,--export=eng_drum_set -Wl,--export=eng_drum_get -Wl,--export=eng_drum_param_max -Wl,--export=eng_drum_param_def \
   -Wl,--export=eng_fx_set -Wl,--export=eng_fx_get -Wl,--export=eng_fx_param_max -Wl,--export=eng_fx_param_def -Wl,--export=eng_fx_tempo -Wl,--export=eng_set_rate \
   -o site/engine.wasm $SRC
+node tools/gen_device_scales.js
 python3 tools/gen_params_js.py
 python3 tools/build_site.py
 echo "engine.wasm: $(wc -c < site/engine.wasm) bytes, integer only, no 64-bit division"

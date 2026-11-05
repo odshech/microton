@@ -50,9 +50,9 @@ int main(void)
     dry(); eng_drum_hit(3, 127); run(2048, NULL); eng_drum_hit(2, 127); run(2048, NULL); run(4096, &ms2);
     CHECK(ms2 < ms * 0.2, "choke: open hat %.0f, choked %.0f", ms, ms2);
     /* parameters reach the sound: a higher tune is a different sound, and the kit default is restorable */
-    dry(); eng_drum_set(0, DP_TUNE, 12000); CHECK(eng_drum_get(0, DP_TUNE) == 12000, "drum param set");
-    CHECK(eng_drum_param_def(0, DP_TUNE) == 3000, "kit default");
-    eng_drum_set(0, DP_RATIO, 99); CHECK(eng_drum_get(0, DP_RATIO) == 15, "clamped to max");
+    dry(); eng_drum_set(0, DP_PITCH, 300); CHECK(eng_drum_get(0, DP_PITCH) == 300, "drum param set");
+    CHECK(eng_drum_param_def(0, DP_PITCH) == 100, "kit default");
+    eng_drum_set(0, DP_MODEL, 99); CHECK(eng_drum_get(0, DP_MODEL) == 4, "clamped to max");
 
     /* the delay: a click comes back at the set time (free, 250 ms), then fades */
     eng_init();
@@ -60,7 +60,7 @@ int main(void)
     eng_fx_set(FX_DLY_TO_REV, 0); eng_fx_set(FX_DLY_FB, 8000); eng_fx_set(FX_DLY_LEVEL, 16383);
     /* 10 ms x 120^(r/16383) = 250 ms → r = 16383 log(25)/log(120) */
     eng_fx_set(FX_DLY_TIME, (uint32_t)(16383.0 * log(25.0) / log(120.0) + 0.5));
-    eng_drum_set(7, DP_DLY, 16383); eng_drum_set(7, DP_LEVEL, 16383);
+    eng_drum_set(7, DP_DLY, 16383); eng_drum_set(7, DP_LEVEL, 100);
     run(44100, NULL);                                        /* the delay's time glides in */
     eng_drum_hit(7, 127);
     {

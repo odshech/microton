@@ -7,6 +7,7 @@
  *                  9 scale -  10 scale +  11 all notes off          (left to right; 6 is free)
  *   OCT- OCT+      period - / +
  *   PLAY           the sequencer (empty at start)
+ *   SAVE           the sounds, drums, effects, scale and patterns to flash (savefile.h); read back at power-on
  *   SEQ            the sequencer page (seqpage.h): the white keys are the 16 steps, hold one to edit it
  *   REC            the load test: 8 voices of the heaviest sound, held
  *   HOME           closes an edit page; on the wheel, switches the bottom line to the load by section; clears the peak
@@ -323,6 +324,7 @@ static void knob(uint32_t enc, uint32_t id, int32_t step)
 
 #include "pages.h"
 #include "seqpage.h"
+#include "savefile.h"
 
 static void app_main(void)
 {
@@ -333,11 +335,13 @@ static void app_main(void)
     seq_init();
     scale_load();
     lcd_fill(0, 0, 240, 240, C_BLACK);
+    if (load_all()) header_msg("LOADED", M_OK);  /* what SAVE wrote (savefile.h) */
 
     for (;;) {
         uint32_t keys, down, up, n = tun_degrees();
         int32_t e;
         platform_poll();
+        header_msg_tick();
 
         /* keys */
         keys = fm1_in.notes;
@@ -394,6 +398,13 @@ static void app_main(void)
             else load_split = !load_split;
         }
         if (pages_button(b)) { panel_dirty = 1; sq_open = 0; }
+        if (b & (1u << BTN_SAVE)) {                 /* everything to flash (savefile.h) */
+            int r;
+            header_msg("SAVING", M_AMB);
+            playing_seq = 0;
+            r = save_all();
+            header_msg(r == 0 ? "SAVED" : "SAVE FAILED", r == 0 ? M_OK : M_RED);
+        }
         if (b & (1u << BTN_SEQ)) {
             sq_open = !sq_open; sq_release_all();
             if (sq_open) { pg = -1; seq_dirty = 1; }

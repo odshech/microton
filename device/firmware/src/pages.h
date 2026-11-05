@@ -14,7 +14,7 @@ enum { T_SYN, T_DRUM, T_FX };
 enum {
     F_PCT, F_BIP, F_PAN, F_WAVE, F_PW, F_DEG, F_C100, F_X8, F_X4, F_CUT, F_HPF, F_OCT8, F_OCT4, F_TIME, F_TIMEOFF,
     F_CURVE, F_LFO, F_C50, F_C10, F_DTUNE, F_ST, F_NCUT, F_DEC, F_PRE, F_FB110, F_DTIME, F_DTONE, F_DLC, F_X8OFF,
-    F_HOLD, F_OPT
+    F_HOLD, F_DPITCH, F_DSWEEP, F_DDECAY, F_DIDX1, F_DIDX2, F_X10, F_INT, F_DDRIVE, F_OPT
 };
 typedef struct { const char *name; uint8_t fmt; uint16_t id; const char *const *opts; } pdesc_t;
 typedef struct { const char *title; pdesc_t p[4]; } bank_t;
@@ -36,7 +36,7 @@ static const char *const O_SYNC[] = {"FREE", "1/32", "1/16T", "1/16", "1/8T", "1
 static const char *const O_RATIO[] = {"0.5", "1", "1.5", "2", "2.5", "3", "4", "5", "6", "7", "1.41", "2.76", "3.14",
                                       "5.19", "7.13", "14"};
 static const char *const O_CLAP[] = {"NONE", "1", "2", "3"};
-static const char *const O_NMODE[] = {"LOW-PASS", "BAND-PASS", "HIGH-PASS"};
+static const char *const O_DMODEL[] = {"KICK", "SNARE", "HAT", "METAL", "PERC"};
 static const char *const O_CHOKE[] = {"NONE", "GROUP 1", "GROUP 2"};
 static const char *const DRUM_NAME[8] = {"KICK", "SNARE", "CL HAT", "OP HAT", "CLAP", "LO TOM", "HI TOM", "RIM"};
 #define NONE_P {0, 0, 0, 0}
@@ -79,12 +79,11 @@ static const bank_t B_FX[] = {
     {"DELAY 3", {{"TAPE WOW", F_PCT, FX_DLY_WOW, 0}, {"SATURATION", F_X4, FX_DLY_DRIVE, 0}, NONE_P, NONE_P}},
 };
 static const bank_t B_DRUM[] = {
-    {"TONE", {{"TUNE", F_DTUNE, DP_TUNE, 0}, {"PITCH SWEEP", F_ST, DP_PITCH_AMT, 0}, {"SWEEP TIME", F_TIME, DP_PITCH_DEC, 0}, {"DECAY", F_TIME, DP_DECAY, 0}}},
-    {"FM", {{"RATIO", F_OPT, DP_RATIO, O_RATIO}, {"AMOUNT", F_PCT, DP_FM, 0}, {"FM DECAY", F_TIME, DP_FM_DEC, 0}, {"FEEDBACK", F_PCT, DP_FEEDBACK, 0}}},
-    {"NOISE", {{"NOISE", F_PCT, DP_NOISE, 0}, {"METAL", F_PCT, DP_METAL, 0}, {"NOISE DECAY", F_TIME, DP_NOISE_DEC, 0}, {"CLAP", F_OPT, DP_CLAP, O_CLAP}}},
-    {"NOISE FILTER", {{"TYPE", F_OPT, DP_NOISE_MODE, O_NMODE}, {"CUTOFF", F_NCUT, DP_NOISE_CUT, 0}, {"RESONANCE", F_PCT, DP_NOISE_RESO, 0}, {"TONE LEVEL", F_PCT, DP_TONE, 0}}},
-    {"OUTPUT", {{"LEVEL", F_PCT, DP_LEVEL, 0}, {"PAN", F_PAN, DP_PAN, 0}, {"REVERB SEND", F_PCT, DP_REV, 0}, {"DELAY SEND", F_PCT, DP_DLY, 0}}},
-    {"MORE", {{"HOLD", F_HOLD, DP_HOLD, 0}, {"DRIVE", F_X8OFF, DP_DRIVE, 0}, {"CHOKE", F_OPT, DP_CHOKE, O_CHOKE}, NONE_P}},
+    {"VOICE", {{"MODEL", F_OPT, DP_MODEL, O_DMODEL}, {"PITCH", F_DPITCH, DP_PITCH, 0}, {"SWEEP", F_DSWEEP, DP_SWEEP, 0}, {"DECAY", F_DDECAY, DP_DECAY, 0}}},
+    {"FM", {{"OP1 INDEX", F_DIDX1, DP_OP1_INDEX, 0}, {"OP1 RATIO", F_X10, DP_OP1_RATIO, 0}, {"OP2 INDEX", F_DIDX2, DP_OP2_INDEX, 0}, {"OP2 RATIO", F_X10, DP_OP2_RATIO, 0}}},
+    {"NOISE, DRIVE", {{"NOISE", F_INT, DP_NOISE, 0}, {"FEEDBACK", F_INT, DP_FEEDBACK, 0}, {"DRIVE", F_DDRIVE, DP_DRIVE, 0}, {"CLAP", F_OPT, DP_CLAP, O_CLAP}}},
+    {"OUTPUT", {{"LEVEL", F_INT, DP_LEVEL, 0}, {"PAN", F_PAN, DP_PAN, 0}, {"REVERB SEND", F_PCT, DP_REV, 0}, {"DELAY SEND", F_PCT, DP_DLY, 0}}},
+    {"MORE", {{"CHOKE", F_OPT, DP_CHOKE, O_CHOKE}, NONE_P, NONE_P, NONE_P}},
 };
 #define NB(a) (uint8_t)(sizeof a / sizeof a[0])
 static const page_t PAGES[] = {
@@ -192,6 +191,14 @@ static char *fmt_value(char *p, const pdesc_t *d, uint32_t r)
     case F_DTONE: p = puthz(p, 3000u + r * 10000u / 16383u); break;
     case F_DLC: p = puthz(p, 2400u + r * 6000u / 16383u); break;
     case F_HOLD: if (!r) p = put(p, "OFF"); else { p = putn(p, r * 200u / 16383u); p = put(p, " ms"); } break;
+    case F_DPITCH: { uint32_t pc = r < 10u ? 10u : r; p = putd(p, pc * 48u / 10u, 1); p = put(p, " Hz"); break; }   /* 0.48 Hz a step */
+    case F_DSWEEP: if (!r) p = put(p, "OFF"); else { *p++ = '+'; p = putn(p, r * 4u); p = put(p, " Hz"); } break;
+    case F_DDECAY: p = putn(p, r); if (r > 100u) p = put(p, " LONG"); break;
+    case F_DIDX1: p = putd(p, r * 225u / 100u, 1); p = put(p, " rad"); break;   /* x 22.5 radians */
+    case F_DIDX2: p = putd(p, r, 1); p = put(p, " rad"); break;                 /* x 10 radians: r tenths */
+    case F_X10: p = putd(p, r, 1); break;
+    case F_INT: p = putn(p, r); break;
+    case F_DDRIVE: *p++ = 'x'; p = putd(p, 100u + r * 5u, 2); break;            /* 1 + r / 20 */
     case F_OPT: p = put(p, d->opts[r]); break;
     default: p = putn(p, r); break;
     }
@@ -255,7 +262,11 @@ static int pages_knobs(void)
         int32_t e = fm1_enc_take(ENC_KNOB1 + k), v, mx;
         if (!e || !d->name) continue;
         mx = (int32_t)p_max(d);
-        v = (int32_t)p_get(d) + (mx > 255 ? e * (e > 2 || e < -2 ? 256 : 128) : e);   /* coarse when turned fast */
+        {                                                               /* ~128 detents end to end; coarse when fast */
+            int32_t st = mx >= 256 ? mx / 128 : 1;
+            if (e > 2 || e < -2) st *= 2;
+            v = (int32_t)p_get(d) + e * st;
+        }
         p_set(d, (uint32_t)(v < 0 ? 0 : v > mx ? mx : v));
         changed = 1;
     }

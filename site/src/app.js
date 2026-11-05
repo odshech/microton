@@ -189,7 +189,7 @@
   let part = 0, values = vals[0];
   const STORE = 'fm1-micro-v1';
   function save() { try { localStorage.setItem(STORE, JSON.stringify({ parts: vals.map(v => Object.fromEntries(PARAMS.map(p => [p.key, v[p.id]]))), ref: $('ref').value, tun,
-    kit: kitVals.map(v => Object.fromEntries(DP.map(p => [p.key, v[p.id]]))), fx: Object.fromEntries(FXP.map(p => [p.key, fxVals[p.id]])) })); } catch (e) { /* storage off */ } }
+    kit3: kitVals.map(v => Object.fromEntries(DP.map(p => [p.key, v[p.id]]))),   /* kit3: the fmdrum port's units */ fx: Object.fromEntries(FXP.map(p => [p.key, fxVals[p.id]])) })); } catch (e) { /* storage off */ } }
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { saved = null; }
   const restoreInto = (v, o) => { for (const k in o) if (byKey[k]) v[byKey[k].id] = Math.max(0, Math.min(byKey[k].max, o[k] | 0)); };
@@ -200,7 +200,7 @@
   const DP = window.FM1_DRUMS.params, KIT = window.FM1_DRUMS.kit, FXP = window.FM1_FX;
   const dpKey = Object.fromEntries(DP.map(p => [p.key, p])), fxKey = Object.fromEntries(FXP.map(p => [p.key, p]));
   const kitVals = KIT.map(r => r.slice()), fxVals = FXP.map(p => p.def);
-  if (saved && saved.kit) saved.kit.forEach((o, d) => { if (d < 8) for (const k in o) if (dpKey[k]) kitVals[d][dpKey[k].id] = Math.max(0, Math.min(dpKey[k].max, o[k] | 0)); });
+  if (saved && saved.kit3) saved.kit3.forEach((o, d) => { if (d < 8) for (const k in o) if (dpKey[k]) kitVals[d][dpKey[k].id] = Math.max(0, Math.min(dpKey[k].max, o[k] | 0)); });
   if (saved && saved.fx) for (const k in saved.fx) if (fxKey[k]) fxVals[fxKey[k].id] = Math.max(0, Math.min(fxKey[k].max, saved.fx[k] | 0));
 
   const inputs = new Map();  /* id → { el, val, row } */
@@ -296,18 +296,16 @@
   const HZC = c => HZ(F0 * Math.pow(2, c / 1200));
   const PANF = r => r === 8192 ? 'centre' : r < 8192 ? `L ${Math.round((8192 - r) / 81.92)}` : `R ${Math.round((r - 8192) / 81.92)}`;
   const DL = {
-    tune: ['Tune', r => HZC(1548 + r * 9600 / 16383)],
-    pitch_amt: ['Pitch sweep', r => r ? `+${(r * 48 / 16383).toFixed(1)} st` : 'off'],
-    pitch_dec: ['Sweep time', T], decay: ['Decay', T],
-    ratio: ['FM ratio', ['0.5', '1', '1.5', '2', '2.5', '3', '4', '5', '6', '7', '1.41', '2.76', '3.14', '5.19', '7.13', '14']],
-    fm: ['FM amount', PCT], fm_dec: ['FM decay', T], feedback: ['Feedback', PCT],
-    noise: ['Noise', PCT], noise_dec: ['Noise decay', T],
-    noise_cut: ['Filter cutoff', r => HZC(4335 + r * 8795 / 16383)],
-    noise_mode: ['Filter type', ['low-pass', 'band-pass', 'high-pass']], noise_reso: ['Resonance', PCT],
-    metal: ['Metal', PCT], tone: ['Tone level', PCT], hold: ['Hold', r => r ? `${Math.round(r * 200 / 16383)} ms` : 'off'],
-    clap: ['Clap bursts', ['none', '1', '2', '3']],
-    drive: ['Drive', OFF_OR(r => `×${(1 + 7 * r / 16383).toFixed(2)}`)], level: ['Level', PCT], pan: ['Pan', PANF],
+    model: ['Model', ['kick', 'snare', 'hat', 'metal', 'perc']],
+    pitch: ['Pitch', r => `${Math.max(10, r)}% · ${HZ(0.48 * Math.max(10, r))}`],
+    sweep: ['Sweep', r => r ? `+${r * 4} Hz` : 'off'],
+    decay: ['Decay', r => r <= 100 ? String(r) : `${r} (long)`],
+    op1_index: ['Op 1 index', r => `${(r * 0.225).toFixed(1)} rad`], op2_index: ['Op 2 index', r => `${(r * 0.1).toFixed(1)} rad`],
+    op1_ratio: ['Op 1 ratio', r => (r / 10).toFixed(1)], op2_ratio: ['Op 2 ratio', r => (r / 10).toFixed(1)],
+    feedback: ['Op 2 feedback', r => `${r}%`], noise: ['Noise', r => `${r}%`],
+    drive: ['Drive', r => `×${(1 + r / 20).toFixed(2)}`], level: ['Level', r => `${r}%`], pan: ['Pan', PANF],
     rev: ['Reverb send', PCT], dly: ['Delay send', PCT], choke: ['Choke group', ['none', 'group 1', 'group 2']],
+    clap: ['Clap bursts', ['none', '1', '2', '3']],
   };
   const FL = {
     rev_size: ['Size (decay)', r => (0.2 + 0.78 * r / 16383).toFixed(2)], rev_pre: ['Pre-delay', r => `${Math.round(r * 100 / 16383)} ms`],
@@ -318,8 +316,9 @@
     dly_lowcut: ['Low cut', r => HZC(2400 + r * 6000 / 16383)], dly_ping: ['Ping-pong', PCT], dly_wow: ['Tape wow', PCT],
     dly_drive: ['Saturation', r => `×${(1 + 3 * r / 16383).toFixed(2)}`], dly_level: ['Level', PCT], dly_to_rev: ['Into the reverb', PCT],
   };
-  const DRUM_GROUPS = [['Tone', ['tune', 'pitch_amt', 'pitch_dec', 'hold', 'decay', 'tone']], ['FM', ['ratio', 'fm', 'fm_dec', 'feedback']],
-    ['Noise and metal', ['noise', 'metal', 'noise_mode', 'noise_cut', 'noise_reso', 'noise_dec', 'clap']], ['Output', ['drive', 'level', 'pan', 'rev', 'dly', 'choke']]];
+  const DRUM_GROUPS = [['Voice', ['model', 'pitch', 'sweep', 'decay', 'noise']],
+    ['FM', ['op1_index', 'op1_ratio', 'op2_index', 'op2_ratio', 'feedback']],
+    ['Output', ['drive', 'level', 'pan', 'rev', 'dly', 'choke', 'clap']]];
   const FX_GROUPS = [['Reverb', ['rev_size', 'rev_pre', 'rev_damp', 'rev_bw', 'rev_mod', 'rev_level']],
     ['Delay', ['dly_sync', 'dly_time', 'dly_fb', 'dly_tone', 'dly_lowcut', 'dly_ping', 'dly_wow', 'dly_drive', 'dly_level', 'dly_to_rev']]];
   let kitTab = 0, drumSel = 0;
@@ -379,7 +378,7 @@
     const body = $('kitBody'); body.textContent = ''; kitInputs.clear();
     (kitTab === 0 ? DRUM_GROUPS : FX_GROUPS).forEach(([title, keys]) => {
       const g = document.createElement('div'); g.className = 'group';
-      const h = document.createElement('h3'); h.textContent = kitTab === 0 && title === 'Tone' ? `${DRUM_NAMES[drumSel]}: ${title}` : title; g.append(h);
+      const h = document.createElement('h3'); h.textContent = kitTab === 0 && title === 'Voice' ? `${DRUM_NAMES[drumSel]}: ${title}` : title; g.append(h);
       keys.forEach(k => g.append(kitControl(k, kitTab === 1)));
       body.append(g);
     });
@@ -391,17 +390,10 @@
 
   /* ================================================================== scales */
   const edo = (n, period = 1200) => Array.from({ length: n }, (_, k) => (period * (k + 1) / n).toFixed(5)).join('\n');
-  const EXAMPLES = [
-    ['12-edo.scl', '12 equal steps to the octave', edo(12)], ['17-edo.scl', '17 equal steps to the octave', edo(17)],
-    ['19-edo.scl', '19 equal steps to the octave', edo(19)], ['22-edo.scl', '22 equal steps to the octave', edo(22)],
-    ['24-edo.scl', 'quarter tones', edo(24)], ['31-edo.scl', '31 equal steps to the octave', edo(31)], ['53-edo.scl', '53 equal steps to the octave', edo(53)],
-    ['bohlen-pierce-eq.scl', 'Bohlen-Pierce: 13 equal steps to the 3/1', edo(13, 1901.955)],
-    ['just-major.scl', 'just major', '9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1'],
-    ['pythagorean-12.scl', 'Pythagorean, 12 notes', '256/243\n9/8\n32/27\n81/64\n4/3\n729/512\n3/2\n128/81\n27/16\n16/9\n243/128\n2/1'],
-    ['meantone-quarter.scl', 'quarter-comma meantone', '76.04900\n193.15686\n310.26471\n386.31371\n503.42157\n579.47057\n696.57843\n772.62743\n889.73529\n1006.84314\n1082.89214\n1200.0'],
-    ['harmonics-8-16.scl', 'harmonics 8 to 16', '9/8\n10/8\n11/8\n12/8\n13/8\n14/8\n15/8\n16/8'],
-    ['pelog-approx.scl', 'pelog, approximate, 7 notes', '120.0\n270.0\n540.0\n670.0\n785.0\n950.0\n1200.0'],
-  ].map(([name, desc, body]) => ({ name, text: `! ${name}\n!\n${desc}\n ${body.split('\n').length}\n!\n${body}\n` }));
+  /* the built-in scales, the same list as on the FM-1 (tools/world_scales.js): always in the list, also beside
+   * the files you load */
+  const EXAMPLES = window.FM1_SCALES.slice();
+  const BUILTIN_NAMES = new Set(EXAMPLES.map(f => f.name));
 
   /* The tuning maths lives in C (engine/tuning.c), the same as on the FM-1. The page runs its own copy of the
    * engine, "mirror", to read the played table; every change goes to both, so the two always agree. */
@@ -422,7 +414,7 @@
   const storeFiles = () => { try { idb.set('files', isExample ? null : files.map(f => ({ name: f.name, text: f.text }))).catch(() => {}); } catch (e) { /* no storage */ } };
 
   function rebuild() {
-    lib = C.buildLibrary(files);
+    lib = C.buildLibrary(isExample ? files : EXAMPLES.concat(files.filter(f => !BUILTIN_NAMES.has(f.name))));
     if (mirror && lib.bytes.length <= mirror.w_lib_cap()) new Uint8Array(mirror.memory.buffer, mirror.w_lib(), lib.bytes.length).set(lib.bytes);
     send({ t: 'lib', bytes: lib.bytes });
     renderFilters(); renderList();
@@ -547,7 +539,7 @@
       if (lib.bytes.length > 640 * 1024) setStatus('The library is over 640 KB, more than the FM-1 can hold.', true);
     } catch (err) { setStatus(err.message || 'Reading failed.', true); }
   });
-  $('resetLib').addEventListener('click', () => { files = EXAMPLES.slice(); isExample = true; storeFiles(); tun.base = { lib: '22-edo.scl' }; rebuild(); setStatus('Back to the example scales.'); });
+  $('resetLib').addEventListener('click', () => { files = EXAMPLES.slice(); isExample = true; storeFiles(); tun.base = { lib: '22-edo.scl' }; rebuild(); setStatus('Back to the built-in scales only.'); });
 
   function renderFilters() {
     const sel = $('degFilter'), was = sel.value, counts = new Map();
@@ -1077,6 +1069,6 @@
     if (stored && stored.length) { files = stored; isExample = false; }
     rebuild();
     renderSeq();
-    setStatus(isExample ? 'Example scales. Load Scala files, or the compressed library, to play in any scale.' : `${lib.scales.length.toLocaleString('en')} scales from your saved library.`);
+    setStatus(isExample ? `${lib.scales.length} built-in scales from around the world. Load Scala files to add more.` : `${lib.scales.length.toLocaleString('en')} scales: the built-in ones and your saved library.`);
   })();
 })();
