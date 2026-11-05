@@ -65,6 +65,9 @@ static uint32_t scale_i = 3;                    /* in LIB_ORDER: 22-EDO */
 static int32_t win = 0;                         /* the first degree on the white keys */
 static int hold, stress, playing_seq, hold_shown = -1;     /* hold_shown: what the title shows (CC 64 redraws) */
 static int32_t key_deg[27];                     /* the degree each key started */
+#define LAT_MAX 8u                               /* HOLD's latched notes: as many as the part has voices */
+static int32_t lat[LAT_MAX];
+static uint32_t nlat;
 static uint8_t held_deg[256];                   /* degrees sounding from the keys (mod n), for the wheel */
 static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
 static const uint8_t BLACK_KEY[11] = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25};
@@ -260,9 +263,6 @@ static void draw_load(uint32_t avg, uint32_t peak)
 /* HOLD (black key 5, or the sustain pedal, CC 64) latches: each key pressed while it is on starts its note and
  * leaves it sounding; pressed again, the note stops. A chord stays as a drone, and notes join or leave it one by
  * one. HOLD off releases the latched notes (keys still down keep sounding). */
-#define LAT_MAX 8u                                  /* as many as the part has voices */
-static int32_t lat[LAT_MAX];
-static uint32_t nlat;
 static void sound_on(int32_t deg, uint32_t vel) { eng_note_on(0, deg, vel); held_deg[imod(deg, (int32_t)tun_degrees())]++; }
 static void sound_off(int32_t deg)
 {
