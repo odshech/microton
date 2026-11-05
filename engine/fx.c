@@ -210,7 +210,7 @@ static void fx_run(int32_t *out, const int32_t *rev, const int32_t *dly)
         int32_t fb = fxd.fb, ping = fxd.ping, nping = 32768 - fxd.ping, lvl = fxd.dlevel, tr = fxd.to_rev;
         int32_t wow = (((sine(fxs.wph) * (fxd.wow >> 1)) >> 14) * 6144) >> 15;   /* up to ±24 samples, Q8 */
         uint32_t loud = 0;
-        fxs.wph += 64000000u;                                              /* ~0.66 Hz */
+        fxs.wph += 1028000u;                                               /* ~0.66 Hz: once per block of 16 */
         for (i = 0; i < ENG_BLOCK / 2u; i++) {
             int32_t x = clamp16(hb_down(dly[2 * i], dly[2 * i + 1])), s[2], f[2], c;
             int32_t k = fxs.dq + wow;

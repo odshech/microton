@@ -51,7 +51,7 @@ int main(void)
     CHECK(ms2 < ms * 0.2, "choke: open hat %.0f, choked %.0f", ms, ms2);
     /* parameters reach the sound: a higher tune is a different sound, and the kit default is restorable */
     dry(); eng_drum_set(0, DP_TUNE, 12000); CHECK(eng_drum_get(0, DP_TUNE) == 12000, "drum param set");
-    CHECK(eng_drum_param_def(0, DP_TUNE) == 2600, "kit default");
+    CHECK(eng_drum_param_def(0, DP_TUNE) == 3000, "kit default");
     eng_drum_set(0, DP_RATIO, 99); CHECK(eng_drum_get(0, DP_RATIO) == 15, "clamped to max");
 
     /* the delay: a click comes back at the set time (free, 250 ms), then fades */

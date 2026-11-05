@@ -10,7 +10,8 @@
  *                   direction, mute
  *   PRESETS         the track: sound 1..3, external MIDI, then each drum on its own (kick .. rim; they live on
  *                   the two drum tracks, four each, which share length, speed and swing)
- *   OCT- OCT+       the page of 16 steps (1-16 .. 49-64)
+ *   OCT- OCT+       the page of 16 steps (1-16 .. 49-64); with steps held: those steps a period down / up
+ *   several held    hold more than one step: the knobs change each of them, from its own value
  *
  * New steps of a melodic track get the last note set here (KNOB 1 on a held step). */
 
@@ -25,7 +26,8 @@ static const uint8_t SQ_SEL[12][2] = {{TR_SYN1, 0}, {TR_SYN2, 0}, {TR_SYN3, 0}, 
 static uint32_t sq_sel;
 static int sq_open;
 static uint32_t sq_track, sq_page, sq_bank, sq_voice;
-static int32_t sq_held = -1, sq_was_on, sq_edited, sq_deg = 0;
+static int32_t sq_held = -1, sq_deg = 0;              /* the step shown (the last pressed of those held) */
+static uint32_t sq_hmask, sq_wasmask, sq_edmask;        /* the held keys; which were on; which were edited */
 static int32_t sq_pos_drawn = -2;
 
 static int sq_drum(void) { return sq_track >= TR_DRUM_A; }
@@ -102,18 +104,45 @@ static void audition(int32_t s)
     eng_note_on(sq_track, sq_aud, (uint32_t)sg(s, SF_VEL));
 }
 
+/* the white keys: hold one or several steps; what the knobs and OCT do then applies to those only */
 static void sq_key(uint32_t w, int down)
 {
     int32_t s = (int32_t)(sq_page * 16u + w);
+    uint32_t b = 1u << w, i;
     if (down) {
-        sq_held = s; sq_edited = 0; sq_was_on = step_lit(s);
-        if (!sq_was_on) step_on(s);
+        sq_hmask |= b; sq_edmask &= ~b;
+        if (step_lit(s)) sq_wasmask |= b; else { sq_wasmask &= ~b; step_on(s); }
+        sq_held = s;
         audition(s);
-    } else if (s == sq_held) {
-        audition_stop();
-        if (sq_was_on && !sq_edited) step_off(s);
-        sq_held = -1;
+    } else if (sq_hmask & b) {
+        sq_hmask &= ~b;
+        if ((sq_wasmask & b) && !(sq_edmask & b)) step_off(s);     /* a lit step pressed and let go: off */
+        if (s == sq_held) {
+            sq_held = -1;
+            for (i = 0; i < 16u; i++) if (sq_hmask & (1u << i)) sq_held = (int32_t)(sq_page * 16u + i);
+        }
+        if (!sq_hmask) audition_stop();
     }
+}
+static void sq_release_all(void) { sq_hmask = 0; sq_held = -1; audition_stop(); }
+
+/* a held step's note, moved by d degrees (degree and period together) */
+static void step_move(int32_t s, int32_t d)
+{
+    int32_t n = (int32_t)tun_degrees(), v = step_note(s) + d, per;
+    if (v < -3 * n) v = -3 * n;
+    if (v > 4 * n - 1) v = 4 * n - 1;
+    per = v >= 0 ? v / n : -((-v + n - 1) / n);
+    ss(s, SF_DEG0, v - per * n); ss(s, SF_PER0, per);
+}
+/* OCT- / OCT+ with steps held: just those steps, a period down or up. 1 = done */
+static int sq_oct(int32_t dir)
+{
+    uint32_t i;
+    if (!sq_hmask || sq_drum()) return 0;
+    for (i = 0; i < 16u; i++) if (sq_hmask & (1u << i)) { step_move((int32_t)(sq_page * 16u + i), dir * (int32_t)tun_degrees()); sq_edmask |= 1u << i; }
+    if (sq_held >= 0) { sq_deg = step_note(sq_held); audition(sq_held); }
+    return 1;
 }
 
 /* the knobs: a held step, or the track. 1 = changed */
@@ -122,9 +151,12 @@ static int sq_knobs(void)
     int32_t e[4], k, any = 0;
     for (k = 0; k < 4; k++) { e[k] = fm1_enc_take(ENC_KNOB1 + (uint32_t)k); any |= e[k]; }
     if (!any) return 0;
-    if (sq_held >= 0) {
-        int32_t s = sq_held;
-        sq_edited = 1;
+    if (sq_hmask) {
+      uint32_t hi;
+      sq_edmask |= sq_hmask;
+      for (hi = 0; hi < 16u; hi++) {
+        int32_t s = (int32_t)(sq_page * 16u + hi);
+        if (!(sq_hmask & (1u << hi))) continue;
         if (sq_drum() || sq_bank) {
             if (sq_drum()) { if (e[0]) ss(s, SF_VEL, sg(s, SF_VEL) + e[0] * 4); if (e[1]) ss(s, SF_PROB, sg(s, SF_PROB) + e[1] * 5); }
             else {
@@ -137,18 +169,15 @@ static int sq_knobs(void)
                 ss(s, SF_COND, cond_value((uint32_t)(i < 0 ? 0 : i > 35 ? 35 : i)));
             }
         } else {
-            if (e[0]) {                                                 /* the note: degree and period together */
-                int32_t n = (int32_t)tun_degrees(), v = step_note(s) + e[0], per;
-                if (v < -3 * n) v = -3 * n;
-                if (v > 4 * n - 1) v = 4 * n - 1;
-                per = v >= 0 ? v / n : -((-v + n - 1) / n);
-                ss(s, SF_DEG0, v - per * n); ss(s, SF_PER0, per); sq_deg = v;
-                audition(s);                                            /* hear the new note */
+            if (e[0]) {                                                 /* the note: each held step from its own */
+                step_move(s, e[0]);
+                if (s == sq_held) { sq_deg = step_note(s); audition(s); }   /* hear the new note */
             }
             if (e[1]) ss(s, SF_VEL, sg(s, SF_VEL) + e[1] * 4);
             if (e[2]) ss(s, SF_GATE, sg(s, SF_GATE) + e[2]);
             if (e[3]) ss(s, SF_PROB, sg(s, SF_PROB) + e[3] * 5);
         }
+      }
     } else {
         uint32_t p = sq_pat(), t = sq_track;
         if (!sq_bank) {
@@ -172,7 +201,7 @@ static void sq_cell(uint32_t i, int32_t pos)
     int32_t s = (int32_t)(sq_page * 16u + i), x = 3 + (int32_t)(i % 8u) * 30, y = 20 + (int32_t)(i / 8u) * 30;
     int lit = step_lit(s), any = sg(s, SF_ON), len = s < seq_track_get(sq_pat(), sq_track, TF_LEN);
     uint16_t bg = lit ? M_RED : any ? RGB(90, 30, 30) : len ? RGB(40, 24, 24) : RGB(16, 12, 12);
-    cv_rect(x, y, 27, 27, s == pos ? M_AMB : s == sq_held ? M_TXT : bg);
+    cv_rect(x, y, 27, 27, (sq_hmask >> i) & 1u ? M_TXT : s == pos ? M_AMB : bg);   /* held: white; playing: amber */
     cv_rect(x + 2, y + 2, 23, 23, bg);
     if (lit && !sq_drum()) {
         char t[8]; int32_t n = (int32_t)tun_degrees(), a = step_sounding(s), d = a - (a >= 0 ? a / n : -((-a + n - 1) / n)) * n;

@@ -380,8 +380,8 @@ static void app_main(void)
         /* buttons */
         b = fm1_input_edges(&rel);
         if (sq_open) {                              /* the sequencer: OCT moves through the pages of steps */
-            if (b & (1u << BTN_OCT_DOWN) && sq_page > 0u) { sq_page--; seq_dirty = 1; }
-            if (b & (1u << BTN_OCT_UP) && sq_page < 3u) { sq_page++; seq_dirty = 1; }
+            if (b & (1u << BTN_OCT_DOWN)) { if (sq_oct(-1)) seq_dirty = 1; else if (sq_page > 0u) { sq_page--; sq_release_all(); seq_dirty = 1; } }
+            if (b & (1u << BTN_OCT_UP)) { if (sq_oct(1)) seq_dirty = 1; else if (sq_page < 3u) { sq_page++; sq_release_all(); seq_dirty = 1; } }
         } else {
             if (b & (1u << BTN_OCT_DOWN)) { win -= (int32_t)n; scale_dirty = 1; }
             if (b & (1u << BTN_OCT_UP)) { win += (int32_t)n; scale_dirty = 1; }
@@ -395,7 +395,7 @@ static void app_main(void)
         }
         if (pages_button(b)) { panel_dirty = 1; sq_open = 0; }
         if (b & (1u << BTN_SEQ)) {
-            sq_open = !sq_open; sq_held = -1; audition_stop();
+            sq_open = !sq_open; sq_release_all();
             if (sq_open) { pg = -1; seq_dirty = 1; }
             else { wheel_dirty = scale_dirty = 1; seq_drawn = ~0u; lcd_fill(0, PANEL_Y, 240, PANEL_H, C_BLACK); }
         }
@@ -416,9 +416,9 @@ static void app_main(void)
             knob(ENC_KNOB4, P_DRIVE, 160);
         }
         if (sq_open && (e = fm1_enc_take(ENC_PRESETS)) != 0) {            /* the sequencer: which track */
-            audition_stop();
+            sq_release_all();
             sq_sel = (uint32_t)imod((int32_t)sq_sel + e, 12); sq_track = SQ_SEL[sq_sel][0]; sq_voice = SQ_SEL[sq_sel][1];
-            sq_held = -1; seq_dirty = 1;
+            seq_dirty = 1;
         } else if (pg >= 0 && PAGES[pg].target != T_FX && (e = fm1_enc_take(ENC_PRESETS)) != 0) {   /* which sound, which drum */
             if (PAGES[pg].target == T_SYN) pg_part = (uint32_t)imod((int32_t)pg_part + e, (int32_t)ENG_PARTS);
             else { pg_drum = (uint32_t)imod((int32_t)pg_drum + e, (int32_t)ENG_DRUMS); eng_drum_hit(pg_drum, 100); }
