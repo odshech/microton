@@ -76,13 +76,41 @@ static void step_off(int32_t s)
 static int32_t step_note(int32_t s) { return sg(s, SF_PER0) * (int32_t)tun_degrees() + sg(s, SF_DEG0); }
 
 /* a white key on the sequencer page: press and release */
+/* the note a step sounds: its degree and period, with the track's transpose and base period */
+static int32_t step_sounding(int32_t s)
+{
+    uint32_t p = sq_pat();
+    return step_note(s) + seq_track_get(p, sq_track, TF_TRANSPOSE) + seq_track_get(p, sq_track, TF_BASE_PER) * (int32_t)tun_degrees();
+}
+static void deg_text(char *p, int32_t a)        /* an absolute degree as "degree" or "degree P+period" */
+{
+    int32_t n = (int32_t)tun_degrees(), per = a >= 0 ? a / n : -((-a + n - 1) / n);
+    p = putn(p, (uint32_t)(a - per * n));
+    if (per) { *p++ = ' '; *p++ = 'P'; p = putsg(p, per); }
+    *p = 0;
+}
+
+/* hearing what is entered: a held melodic step sounds its note (transposed), a drum step its drum */
+static int32_t sq_aud = 0x7FFFFFFF;
+static void audition_stop(void) { if (sq_aud != 0x7FFFFFFF) { eng_note_off(sq_track, sq_aud); sq_aud = 0x7FFFFFFF; } }
+static void audition(int32_t s)
+{
+    if (sq_drum()) { eng_drum_hit((sq_track == TR_DRUM_B ? 4u : 0u) + sq_voice, (uint32_t)sg(s, SF_VEL)); return; }
+    if (sq_track > TR_SYN3) return;                                  /* the MIDI track: nothing here to hear */
+    audition_stop();
+    sq_aud = step_sounding(s);
+    eng_note_on(sq_track, sq_aud, (uint32_t)sg(s, SF_VEL));
+}
+
 static void sq_key(uint32_t w, int down)
 {
     int32_t s = (int32_t)(sq_page * 16u + w);
     if (down) {
         sq_held = s; sq_edited = 0; sq_was_on = step_lit(s);
         if (!sq_was_on) step_on(s);
+        audition(s);
     } else if (s == sq_held) {
+        audition_stop();
         if (sq_was_on && !sq_edited) step_off(s);
         sq_held = -1;
     }
@@ -115,6 +143,7 @@ static int sq_knobs(void)
                 if (v > 4 * n - 1) v = 4 * n - 1;
                 per = v >= 0 ? v / n : -((-v + n - 1) / n);
                 ss(s, SF_DEG0, v - per * n); ss(s, SF_PER0, per); sq_deg = v;
+                audition(s);                                            /* hear the new note */
             }
             if (e[1]) ss(s, SF_VEL, sg(s, SF_VEL) + e[1] * 4);
             if (e[2]) ss(s, SF_GATE, sg(s, SF_GATE) + e[2]);
@@ -146,8 +175,8 @@ static void sq_cell(uint32_t i, int32_t pos)
     cv_rect(x, y, 27, 27, s == pos ? M_AMB : s == sq_held ? M_TXT : bg);
     cv_rect(x + 2, y + 2, 23, 23, bg);
     if (lit && !sq_drum()) {
-        char t[8]; int32_t d = sg(s, SF_DEG0);
-        t[putn(t, (uint32_t)d) - t] = 0;
+        char t[8]; int32_t n = (int32_t)tun_degrees(), a = step_sounding(s), d = a - (a >= 0 ? a / n : -((-a + n - 1) / n)) * n;
+        t[putn(t, (uint32_t)d) - t] = 0;                                /* the degree it sounds, transposed */
         cv_text(x + 14 - text_w(&FONT_S, t) / 2, y + 6, &FONT_S, t, C_BLACK);
     }
 }
@@ -203,9 +232,13 @@ static void draw_seqpage(void)
             }
         } else {
             int32_t g = sg(s, SF_GATE);
-            lab[0] = "NOTE"; p = putn(v[0], (uint32_t)sg(s, SF_DEG0));
-            if (sg(s, SF_PER0)) { *p++ = ' '; *p++ = 'P'; p = putsg(p, sg(s, SF_PER0)); }
-            *p = 0;
+            {                                                           /* the note as it sounds: with the transpose */
+                static char nl[16];
+                int32_t tp = seq_track_get(pt, tr, TF_TRANSPOSE);
+                p = put(nl, "NOTE"); if (tp) { p = put(p, " T"); p = putsg(p, tp); } *p = 0;
+                lab[0] = nl;
+                deg_text(v[0], step_sounding(s));
+            }
             lab[1] = "VELOCITY"; v[1][putn(v[1], (uint32_t)sg(s, SF_VEL)) - v[1]] = 0;
             lab[2] = "LENGTH"; if (g >= 17) p = put(v[2], "TIE"); else { p = putn(v[2], (uint32_t)g); p = put(p, "/16"); } *p = 0;
             lab[3] = "PROB"; p = putn(v[3], (uint32_t)sg(s, SF_PROB)); *p++ = '%'; *p = 0;
