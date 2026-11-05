@@ -8,9 +8,9 @@
  *                   condition)
  *   no step held    the knobs edit the track: length, speed, swing, transpose; ALGORITHM: pattern, pattern length,
  *                   direction, mute
- *   PRESETS         the track: sound 1..3, external MIDI, drums A (kick snare hats), drums B (clap toms rim)
+ *   PRESETS         the track: sound 1..3, external MIDI, then each drum on its own (kick .. rim; they live on
+ *                   the two drum tracks, four each, which share length, speed and swing)
  *   OCT- OCT+       the page of 16 steps (1-16 .. 49-64)
- *   black keys 1..4 on a drum track: which drum the step keys write
  *
  * New steps of a melodic track get the last note set here (KNOB 1 on a held step). */
 
@@ -19,6 +19,10 @@ static const char *const SPEED_NAME[6] = {"x2", "x1", "x1/2", "x1/4", "x4/3", "x
 static const char *const DIR_NAME[4] = {"FWD", "BACK", "PING", "RAND"};
 static const char *const DRUMV_NAME[2][4] = {{"KICK", "SNARE", "CL HAT", "OP HAT"}, {"CLAP", "LO TOM", "HI TOM", "RIM"}};
 
+/* what PRESETS steps through: a track, and on the drum tracks one of its four drums */
+static const uint8_t SQ_SEL[12][2] = {{TR_SYN1, 0}, {TR_SYN2, 0}, {TR_SYN3, 0}, {TR_EXT, 0},
+    {TR_DRUM_A, 0}, {TR_DRUM_A, 1}, {TR_DRUM_A, 2}, {TR_DRUM_A, 3}, {TR_DRUM_B, 0}, {TR_DRUM_B, 1}, {TR_DRUM_B, 2}, {TR_DRUM_B, 3}};
+static uint32_t sq_sel;
 static int sq_open;
 static uint32_t sq_track, sq_page, sq_bank, sq_voice;
 static int32_t sq_held = -1, sq_was_on, sq_edited, sq_deg = 0;
@@ -162,8 +166,8 @@ static void draw_seqpage(void)
     uint32_t i, pt = sq_pat(), tr = sq_track;
     int32_t pos = seq_track_pos(tr);
     cv_begin(240, 96, C_BLACK);
-    p = put(p, "SEQ "); p = put(p, TRACK_NAME[tr]);
-    if (sq_drum()) { *p++ = ' '; p = put(p, DRUMV_NAME[tr - TR_DRUM_A][sq_voice]); }
+    p = put(p, "SEQ ");
+    p = put(p, sq_drum() ? DRUMV_NAME[tr - TR_DRUM_A][sq_voice] : TRACK_NAME[tr]);
     *p = 0;
     cv_text(6, 1, &FONT_S, t, M_RED);
     p = t; p = put(p, "P"); p = putn(p, pt + 1u); *p++ = ' '; p = putn(p, sq_page * 16u + 1u); *p++ = '-'; p = putn(p, sq_page * 16u + 16u); *p = 0;

@@ -351,10 +351,6 @@ static void app_main(void)
                 if (up >> k & 1u) { sq_key((uint32_t)w, 0); seq_dirty = 1; }
                 continue;
             }
-            if (sq_open && (down >> k & 1u) && (bk = key_black(k)) >= 0 && bk < 4 && sq_drum()) {   /* which drum */
-                sq_voice = (uint32_t)bk; seq_dirty = 1;
-                continue;
-            }
             if (down >> k & 1u) {
                 if (w >= 0 && pg >= 0 && PAGES[pg].target == T_DRUM) {   /* the drum page: keys 1..8 play the drums */
                     if (w < 8) { eng_drum_hit((uint32_t)w, 110); if (pg_drum != (uint32_t)w) { pg_drum = (uint32_t)w; panel_dirty = 1; } }
@@ -420,7 +416,8 @@ static void app_main(void)
             knob(ENC_KNOB4, P_DRIVE, 160);
         }
         if (sq_open && (e = fm1_enc_take(ENC_PRESETS)) != 0) {            /* the sequencer: which track */
-            sq_track = (uint32_t)imod((int32_t)sq_track + e, (int32_t)SEQ_TRACKS); sq_voice = 0; sq_held = -1; seq_dirty = 1;
+            sq_sel = (uint32_t)imod((int32_t)sq_sel + e, 12); sq_track = SQ_SEL[sq_sel][0]; sq_voice = SQ_SEL[sq_sel][1];
+            sq_held = -1; seq_dirty = 1;
         } else if (pg >= 0 && PAGES[pg].target != T_FX && (e = fm1_enc_take(ENC_PRESETS)) != 0) {   /* which sound, which drum */
             if (PAGES[pg].target == T_SYN) pg_part = (uint32_t)imod((int32_t)pg_part + e, (int32_t)ENG_PARTS);
             else { pg_drum = (uint32_t)imod((int32_t)pg_drum + e, (int32_t)ENG_DRUMS); eng_drum_hit(pg_drum, 100); }
