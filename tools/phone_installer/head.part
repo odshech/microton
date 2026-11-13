@@ -1,0 +1,48 @@
+<title>התקנת Arcturus S6 מהטלפון</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=Secular+One&display=swap">
+<style>
+/* Layout: one column, the three steps of an install in order, the log folded at the bottom */
+:root {
+  --bg: #eef1ee; --panel: #f8faf8; --ink: #18201d; --muted: #5a6762; --line: #ccd5d0;
+  --accent: #2c7a69; --accent-soft: #d8ebe5; --warn: #b23b2e; --brass: #a86f12;
+  --f-display: "Secular One", "IBM Plex Sans Hebrew", "Arial Hebrew", sans-serif;
+  --f-body: "IBM Plex Sans Hebrew", "Arial Hebrew", "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #111614; --panel: #18201d; --ink: #e3e9e6; --muted: #93a29c; --line: #2c3833;
+    --accent: #5cc0a8; --accent-soft: #1c3a33; --warn: #ef7c6e; --brass: #e2b45c; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #111614; --panel: #18201d; --ink: #e3e9e6; --muted: #93a29c; --line: #2c3833;
+  --accent: #5cc0a8; --accent-soft: #1c3a33; --warn: #ef7c6e; --brass: #e2b45c; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 40px; }
+.wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 16px; }
+h1 { font-family: var(--f-display); font-weight: 400; font-size: 28px; margin: 0; }
+.lead { margin: 0; color: var(--muted); }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 10px; }
+.step h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+.step h2 span { font-family: var(--f-mono); color: var(--accent); }
+.step p { margin: 0; }
+.note { color: var(--muted); font-size: 14px; }
+code, .mono { font-family: var(--f-mono); direction: ltr; unicode-bidi: isolate; }
+button { font: inherit; font-size: 15px; border: 1px solid var(--accent); background: var(--accent); color: var(--panel); font-weight: 600;
+  border-radius: 6px; padding: 8px 18px; cursor: pointer; justify-self: start; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=file] { font: inherit; font-size: 14px; max-width: 100%; }
+progress { width: 100%; height: 12px; accent-color: var(--accent); }
+.status { font-weight: 500; min-height: 1.5em; }
+.status.err { color: var(--warn); }
+.status.ok { color: var(--accent); }
+.id { font-family: var(--f-mono); font-size: 14px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+pre { font-family: var(--f-mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+  max-height: 240px; overflow: auto; direction: ltr; text-align: left; white-space: pre-wrap; }
+ul { margin: 0; padding-inline-start: 20px; }
+button#go { font-size: 18px; padding: 14px 28px; width: 100%; justify-self: stretch; }
+.warnbox { border-color: var(--warn); }
+.warnbox h2 { color: var(--warn); }
+</style>

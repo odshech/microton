@@ -1,0 +1,39 @@
+
+<div class="wrap">
+  <h1>התקנת <span class="mono">Arcturus S6</span></h1>
+  <p class="lead">גרסה עם תמיכה ביחידות החדשות. הקושחה כבר בתוך הדף, אין צורך להוריד קובץ.</p>
+  <p class="id" id="pkgInfo"></p>
+
+  <section class="step warnbox" id="unsupported" hidden>
+    <h2>הדפדפן לא מתאים</h2>
+    <p>צריך <span class="mono">Chrome</span> באנדרואיד. באייפון אין תמיכה בחיבור כזה (<span class="mono">Web MIDI</span>), גם לא בכרום.</p>
+  </section>
+
+  <section class="step">
+    <h2><span>1</span> חיבור</h2>
+    <ul>
+      <li>הדליקו את המכשיר.</li>
+      <li>חברו אותו לטלפון בכבל נתונים: מ־<span class="mono">USB-C</span> ל־<span class="mono">USB-C</span>, או דרך מתאם <span class="mono">OTG</span>.</li>
+      <li>אם הטלפון שואל מה לעשות עם המכשיר, בחרו <span class="mono">MIDI</span>.</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <h2><span>2</span> התקנה</h2>
+    <button id="go" type="button" disabled>התקנה</button>
+    <progress id="bar" max="100" value="0"></progress>
+    <p class="status" id="status" role="status">טוען…</p>
+    <p class="note">כדקה. השאירו את המסך דלוק ואל תנתקו עד ההודעה שהסתיים. אם משהו נקטע, חברו שוב ולחצו שוב התקנה: המכשיר נשאר במצב עדכון עד שהכתיבה מסתיימת.</p>
+  </section>
+
+  <section class="step">
+    <h2>חזרה וחילוץ</h2>
+    <ul>
+      <li>אם המכשיר לא עולה: החזיקו את <code>OCT-</code> בזמן ההדלקה, ואז לחצו שוב התקנה.</li>
+      <li>חזרה לקושחת היצרן: בחרו כאן את הקובץ הרשמי <code>FM-1.fwsc</code> ולחצו התקנה.</li>
+    </ul>
+    <input id="file" type="file" accept=".fwsc" aria-label="קובץ קושחה אחר">
+  </section>
+
+  <details><summary>פרטים טכניים</summary><pre id="log"></pre></details>
+</div>
