@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate the wavetables as a C header (firmware/src/wt_tables.h).
 
-PPG / early Waldorf style: 64 waves per table, 128 samples per wave, 8-bit signed.
+PPG / early Waldorf style: 64 waves per table, 128 samples per wave, 8-bit signed (LO-FI), with 16-bit
+band-limited levels for HI-FI.
 Each table is described by a recipe: a function from position t (0..1 across the table)
 to a list of (harmonic number, amplitude, phase). The waves are built by additive
 synthesis here on the computer, normalised, quantised to 8 bits and written out as
@@ -246,13 +247,45 @@ def raw_wave(w):
 
 
 def build_table(recipe, per_wave):
+    """the waves, normalised to +-1 (floats)"""
     raws = [raw_wave(recipe(w / (WAVES - 1))) for w in range(WAVES)]
     top = max(max(abs(v) for v in r) for r in raws) or 1.0
     out = []
     for r in raws:
         peak = (max(abs(v) for v in r) or 1.0) if per_wave else top
-        out.append([max(-127, min(127, round(v / peak * 127))) for v in r])
+        out.append([v / peak for v in r])
     return out
+
+
+# HI-FI: four levels, each half the harmonics of the one before (64, 32, 16, 8) on half the samples (2x each).
+# The oscillator plays the richest level whose top harmonic stays under the Nyquist frequency, so high notes
+# do not alias. Values are 16-bit at half scale (x 16256 = 127 x 128: room for the band-limited levels' overshoot);
+# level 0 holds the 8-bit wave in its top bits exactly: (v + 64) >> 7 is LO-FI's sample, bit for bit.
+LEVELS = [(64, 128), (32, 64), (16, 32), (8, 16)]   # (top harmonic, samples)
+
+
+def q8(x):
+    return max(-127, min(127, round(x * 127)))
+
+
+def level0(wave):
+    out = []
+    for x in wave:
+        v8 = q8(x)
+        d = max(-64, min(63, round((x * 127 - v8) * 128)))
+        out.append(v8 * 128 + d)
+    return out
+
+
+def level_n(wave, top, n):
+    import numpy as np
+    spec = np.fft.rfft(np.array(wave, dtype=float))
+    keep = np.zeros(n // 2 + 1, dtype=complex)
+    keep[1:top + 1] = spec[1:top + 1]               # no DC, nothing over the top harmonic
+    if top == n // 2:
+        keep[top] = keep[top].real                  # (the Nyquist bin of n samples is real)
+    y = np.fft.irfft(keep, n) * (n / len(wave))
+    return [max(-32767, min(32767, int(round(v * 16256)))) for v in y]
 
 
 def write_luts(root):
@@ -326,17 +359,24 @@ def main():
         f"#define WT_SAMPLES {SAMPLES}u",
         "static const char *const WT_NAME[WT_TABLES] = {"
         + ", ".join(f'"{name}"' for name, _, _ in TABLES) + "};",
-        "static const int8_t WT[WT_TABLES][WT_WAVES][WT_SAMPLES] = {",
+        "#define WT_NLEV 4u                       /* the HI-FI levels: top harmonic 64, 32, 16, 8 */",
+        "/* WTH0: (v + 64) >> 7 is the 8-bit wave (LO-FI); v << 1 the 16-bit one (HI-FI, +-32512 at full scale) */",
     ]
-    for name, recipe, per_wave in TABLES:
-        lines.append(f"  {{ /* {name} */")
-        for wave in build_table(recipe, per_wave):
-            lines.append("    {" + ",".join(str(v) for v in wave) + "},")
-        lines.append("  },")
-    lines.append("};")
+    tables = [build_table(recipe, per_wave) for _, recipe, per_wave in TABLES]
+    size = 0
+    for lv, (top, n) in enumerate(LEVELS):
+        lines.append(f"static const int16_t WTH{lv}[WT_TABLES][WT_WAVES][{n}] = {{")
+        for (name, _, _), table in zip(TABLES, tables):
+            lines.append(f"  {{ /* {name} */")
+            for wave in table:
+                v = level0(wave) if lv == 0 else level_n(wave, top, n)
+                lines.append("    {" + ",".join(str(x) for x in v) + "},")
+            lines.append("  },")
+        lines.append("};")
+        size += len(TABLES) * WAVES * n * 2
     out = root / "firmware" / "src" / "wt_tables.h"
     out.write_text("\n".join(lines) + "\n")
-    print(f"{out}: {len(TABLES)} table(s), {len(TABLES) * WAVES * SAMPLES} bytes")
+    print(f"{out}: {len(TABLES)} table(s), {size} bytes")
 
 
 

@@ -82,9 +82,17 @@ static volatile int32_t q_step_v[NO], q_pitch_v[NO];   /* for the screen: the st
 #define NTAB (WT_TABLES + 1u)
 static int8_t gen_tab[2][WT_WAVES][WT_SAMPLES]; /* two: one plays while the other is built */
 static volatile uint32_t gen_cur;
-static const int8_t *table_of(uint32_t t)
+static const int8_t *gen_of(void) { return &gen_tab[gen_cur & 1u][0][0]; }
+/* a built-in table, HI-FI level l (wt_tables.h): 128 >> l samples a wave, at half scale (<< 1: +-32512) */
+static const int16_t *lev_of(uint32_t t, uint32_t l)
 {
-    return t >= T_GEN ? &gen_tab[gen_cur & 1u][0][0] : &WT[t][0][0];
+    return l == 0u ? &WTH0[t][0][0] : l == 1u ? &WTH1[t][0][0] : l == 2u ? &WTH2[t][0][0] : &WTH3[t][0][0];
+}
+/* HI-FI: the richest level whose top harmonic (64 >> l) stays under ~23 kHz at this phase step (44.1 kHz) */
+#define LEV_LIM 2240000000u                     /* 23 kHz / 44.1 kHz x 2^32 */
+static uint32_t lev_for(uint32_t inc)
+{
+    return inc <= LEV_LIM / 64u ? 0u : inc <= LEV_LIM / 32u ? 1u : inc <= LEV_LIM / 16u ? 2u : 3u;
 }
 static osc_st_t ost[NO];
 
@@ -231,8 +239,9 @@ static void render(int32_t *out)                /* SUB frames */
     uint32_t o, k, d, i;
     int32_t pm[NO], fg_g[NO], fg_t[NO], fg_mk[NO], hc[NO], amp_t[NO], amp_d[NO], pl[NO], pr[NO];
     uint32_t inc[NO];
-    const int8_t *tab[NO];
-    uint32_t step[NO];
+    const int8_t *tab[NO];                      /* the generative table (RAM, 8-bit); else 0 */
+    const int16_t *th[NO];                      /* a built-in table: LO-FI level 0, HI-FI the level for the pitch */
+    uint32_t step[NO], lsh[NO];
     int32_t vin[SUB], sendg[NO], dsendg[NO], dinb[SUB], fsendg[NO], finb[SUB], hcc[NO];
     const int32_t qm = eng_mask, qv = eng_mask >> 2;   /* the word length: on the bus, and on a voice (~1/4 scale) */
     const int32_t qh = (int32_t)(((uint32_t)~qm + 1u) >> 1), qvh = (int32_t)(((uint32_t)~qv + 1u) >> 1);   /* (rounding) */
@@ -325,7 +334,7 @@ static void render(int32_t *out)                /* SUB frames */
     for (o = 0; o < NO; o++) {
         const osc_par_t *p = &opar[o];
         const int32_t *a = &acc[o * NP];
-        tab[o] = table_of(p->table);
+        tab[o] = p->table >= T_GEN ? gen_of() : 0;
         step[o] = p->scan;
         sendg[o] = p->send;
         dsendg[o] = p->dsend;
@@ -355,6 +364,11 @@ static void render(int32_t *out)                /* SUB frames */
             q_pitch_v[o] = pq;
             inc[o] = pitch_inc(pq + p->fine_q8) << half;   /* (at 22 kHz: twice the step, every other frame) */
         }
+        if (!tab[o]) {
+            uint32_t l = half ? 0u : lev_for(inc[o]);
+            th[o] = lev_of(p->table, l);
+            lsh[o] = 25u + l;                   /* the phase's top bits: the sample */
+        } else th[o] = 0;
         target = (cl(p->pos * 256 + a[P_WAVE], 0, 127 * 256) * 127) >> 8;   /* -> Q8 waves, 0..63 */
         dpos = target - ost[o].posq;
         ost[o].posq += dpos > 128 ? 128 : dpos < -128 ? -128 : dpos;
@@ -388,24 +402,38 @@ static void render(int32_t *out)                /* SUB frames */
             osc_st_t *s = &ost[o];
             uint32_t ph, idx, w, frac;
             int32_t x, v;
-            const int8_t *w0, *w1;
             s->ph += inc[o];
             ph = s->ph;
             if (o == 0u) ph += (uint32_t)(prev1 * pm[0]) << 6;           /* phase modulation (wraps: fine) */
             else if (o == 1u) ph += (uint32_t)(prev0 * pm[1]) << 6;
-            idx = ph >> 25;                      /* 128 samples a wave, no interpolation: PPG grit */
             if (step[o]) { w = ((uint32_t)s->posq + 128u) >> 8; frac = 0; }   /* stepped: one wave, then the next */
             else { w = (uint32_t)s->posq >> 8; frac = (uint32_t)s->posq & 255u; }
-            w0 = tab[o] + w * WT_SAMPLES;
-            w1 = w + 1u < WT_WAVES ? w0 + WT_SAMPLES : w0;
-            if (half)                            /* LO-FI: the nearest sample */
-                x = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm;   /* +-32512 */
-            else {                               /* HI-FI: linear between the samples too */
-                uint32_t i2 = (idx + 1u) & 127u;
-                int32_t f2 = (int32_t)((ph >> 17) & 255u);
-                int32_t a0 = (int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac;
-                int32_t a1 = (int32_t)w0[i2] * (int32_t)(256u - frac) + (int32_t)w1[i2] * (int32_t)frac;
+            if (th[o] && half) {                 /* LO-FI: the 8-bit wave, the nearest sample: PPG grit */
+                const int16_t *h0 = th[o] + w * WT_SAMPLES, *h1 = w + 1u < WT_WAVES ? h0 + WT_SAMPLES : h0;
+                idx = ph >> 25;
+                x = ((((int32_t)h0[idx] + 64) >> 7) * (int32_t)(256u - frac)
+                     + (((int32_t)h1[idx] + 64) >> 7) * (int32_t)frac + qh) & qm;   /* +-32512 */
+            } else if (th[o]) {                  /* HI-FI: 16 bit, band-limited, linear between the samples */
+                uint32_t sh = lsh[o], ns = 1u << (32u - sh), i2;
+                const int16_t *h0 = th[o] + w * ns, *h1 = w + 1u < WT_WAVES ? h0 + ns : h0;
+                int32_t a0, a1, f2;
+                idx = ph >> sh; i2 = (idx + 1u) & (ns - 1u);
+                f2 = (int32_t)((ph >> (sh - 8u)) & 255u);
+                a0 = ((int32_t)h0[idx] * (int32_t)(256u - frac) + (int32_t)h1[idx] * (int32_t)frac) >> 7;
+                a1 = ((int32_t)h0[i2] * (int32_t)(256u - frac) + (int32_t)h1[i2] * (int32_t)frac) >> 7;
                 x = a0 + (((a1 - a0) * f2) >> 8);
+            } else {                             /* the generative table (8-bit) */
+                const int8_t *w0 = tab[o] + w * WT_SAMPLES, *w1 = w + 1u < WT_WAVES ? w0 + WT_SAMPLES : w0;
+                idx = ph >> 25;
+                if (half)
+                    x = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm;
+                else {
+                    uint32_t i2 = (idx + 1u) & 127u;
+                    int32_t f2 = (int32_t)((ph >> 17) & 255u);
+                    int32_t a0 = (int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac;
+                    int32_t a1 = (int32_t)w0[i2] * (int32_t)(256u - frac) + (int32_t)w1[i2] * (int32_t)frac;
+                    x = a0 + (((a1 - a0) * f2) >> 8);
+                }
             }
             if (o >= 2u) {                       /* the wavefolder */
                 int32_t y = (x * fg_g[o]) >> 8, t = fg_t[o], n;
@@ -1450,15 +1478,18 @@ static void draw_osc(uint32_t sel, int shift)
     cv_out(BODY_Y);
 }
 
-static const int8_t *wave_tab;
-static int32_t wave_at(uint32_t w, uint32_t i) { return wave_tab[w * WT_SAMPLES + i]; }
+static uint32_t wave_t;                         /* the table on the screen */
+static int32_t wave_at(uint32_t w, uint32_t i)  /* -127..127 */
+{
+    return wave_t >= T_GEN ? gen_of()[w * WT_SAMPLES + i] : (WTH0[wave_t][w][i] + 64) >> 7;
+}
 
 
 static void draw_wave(uint32_t sel, int32_t posq)
 {
     int32_t w, i, f = posq & 255, wc = posq >> 8;
     char s[40] = "OSC ";
-    wave_tab = table_of(otab[sel]);
+    wave_t = otab[sel];
     if (oscan[sel]) { wc = (posq + 128) >> 8; f = 0; }   /* stepped: the wave it is on */
     cv_begin(240, BODY_H, PH_BG);
     for (w = 60; w >= 0; w -= 4) {              /* the table in 3D, back to front, as the Waveterm drew it */
