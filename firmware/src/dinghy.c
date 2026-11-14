@@ -134,6 +134,10 @@ static volatile uint8_t seq_run;                /* PLAY on the sequencer page */
 static volatile uint8_t seq_pos;                /* the step now (the screen reads it) */
 static uint32_t seq_ph, seq_blocks, seq_steplen = 172u, seq_clk_seen;
 static volatile uint8_t seq_restart;            /* PLAY: from step 1 */
+/* TRACK (page S, kept with the VDU settings, on by default): the keys, or the running sequence, move every
+ * oscillator's pitch by itself, whatever the patch, before the quantisers. Played: nothing (0) until a key. */
+static volatile uint8_t trk_on = 1;
+static volatile int32_t key_semi, seq_semi, seq_tr;   /* the key's offset from C4; the step's; the key's while it runs */
 static volatile uint32_t clk_ticks;             /* (defined below) */
 /* once a block (32 frames): the sequencer's clock, its step, its gate. A step is a 16th: of its own tempo, or six
  * MIDI clocks. Nothing here touches the sound unless a pin takes SEQ or SEQ GATE somewhere. */
@@ -142,7 +146,7 @@ static void seq_tick(void)
     uint32_t adv = 0, len = seqpatch.len ? seqpatch.len : 1u;
     if (!seq_run) { seq_gate = 0; return; }
     if (seq_restart) {
-        seq_restart = 0; seq_pos = (uint8_t)(len - 1u); seq_ph = 0; seq_clk_seen = clk_ticks; adv = 1;
+        seq_restart = 0; seq_pos = (uint8_t)(len - 1u); seq_ph = 0; seq_clk_seen = clk_ticks; adv = 1; seq_tr = 0;
     } else if (seqpatch.clk) {                  /* MIDI: every sixth clock (START: the next clock is a step) */
         uint32_t c = clk_ticks;
         if (c != seq_clk_seen && c / 6u != seq_clk_seen / 6u) adv = 1;
@@ -159,7 +163,7 @@ static void seq_tick(void)
         seq_blocks = 0;
         seq_pos = (uint8_t)((seq_pos + 1u) % len);
         n = seqpatch.note[seq_pos];
-        if (n != 255u) { seq_cv = ((int32_t)n - 60) * KEY_STEP; seq_gate = 1; }
+        if (n != 255u) { seq_cv = ((int32_t)n - 60) * KEY_STEP; seq_semi = (int32_t)n - 60; seq_gate = 1; }
         else seq_gate = 0;
     }
     if (seq_blocks++ >= seq_steplen * seqpatch.gate / 100u) seq_gate = 0;
@@ -443,6 +447,7 @@ static void render(int32_t *out)                /* SUB frames */
         int32_t q, target, dpos;
         {
             int32_t pq = p->pitch_q8 + ((a[P_PITCH] * 3) >> 3);           /* full depth: ~4 octaves */
+            if (trk_on) pq += (seq_run ? seq_semi + seq_tr : key_semi) * 256;   /* TRACK: the keys, or the sequence */
             if (p->qon) {                       /* the quantiser, with a little hysteresis (~8 cents) */
                 int32_t id, sn, cand = quantise(pq, &id, &sn), dc = pq - cand, dh = pq - q_held[o];
                 if (dc < 0) dc = -dc;
@@ -1551,12 +1556,6 @@ static void draw_index(uint32_t cur)
 
 /* page S: the sequencer and the keys. Two rows of eight steps; the cursor boxed, the step now lit */
 static uint32_t kb_note = 60;                   /* the last key played (or MIDI note) */
-static uint32_t key_pinned(void)                /* any pin from KEYS or SEQ to an oscillator's pitch */
-{
-    uint32_t o;
-    for (o = 0; o < NO; o++) if (depth[S_KEY][o * NP + P_PITCH] || depth[S_SEQ][o * NP + P_PITCH]) return 1;
-    return 0;
-}
 static void draw_seq(uint32_t cur, uint32_t rec, int32_t oct)
 {
     char s[40];
@@ -1587,11 +1586,12 @@ static void draw_seq(uint32_t cur, uint32_t rec, int32_t oct)
     s[0] = 0; s_cat(s, "KEY "); s_note(s, kb_note);
     s_cat(s, key_gate ? " ON" : "");
     cv_text(4, 136, &FONT_S, s, key_gate ? PH_HI : PH_MID);
-    cv_text(124, 136, &FONT_S, key_pinned() ? "PITCH PINNED" : "NOT PINNED", key_pinned() ? PH_HI : PH_LO);
+    cv_text(236 - text_w(&FONT_S, trk_on ? "TRACK ON" : "TRACK OFF"), 136, &FONT_S, trk_on ? "TRACK ON" : "TRACK OFF",
+            trk_on ? PH_HI : PH_LO);
     cv_rect(0, 154, 240, 1, PH_LO);
     cv_text(2, 160, &FONT_S, "K1 BPM K2 LEN K3 GATE", PH_LO);
     cv_text(2, 178, &FONT_S, "PLAY RUN  REC WRITE  SEL REST", PH_LO);
-    cv_text(2, 196, &FONT_S, "SEL+K1 CLOCK  SEL+PLAY PIN", PH_LO);
+    cv_text(2, 196, &FONT_S, "SEL+ K1 CLK PLAY TRK REC RND", PH_LO);
     cv_out(BODY_Y);
 }
 
@@ -2334,6 +2334,7 @@ static void midi_poll(void)                     /* the clock, START: the clocked
             midi_held[(d1 >> 5) & 3u] |= 1u << (d1 & 31u);
             kb_note = d1;
             key_cv = ((int32_t)cl(d1, 13, 107) - 60) * KEY_STEP;
+            if (seq_run) seq_tr = (int32_t)cl(d1, 13, 107) - 60; else key_semi = (int32_t)cl(d1, 13, 107) - 60;
         } else if (ty == 0x80u || ty == 0x90u) midi_held[(d1 >> 5) & 3u] &= ~(1u << (d1 & 31u));
     }
     key_gate = (uint8_t)(kb_keys_gate || (midi_held[0] | midi_held[1] | midi_held[2] | midi_held[3]) != 0u);
@@ -2425,6 +2426,7 @@ static void app_main(void)
     if (gset.phos >= NPHOS) gset.phos = 0;
     if (gset.bright > 10u) gset.bright = 7;
     gset.eng &= 1u;
+    trk_on = !(gset.pad & 1u);
     push_eng();
     crt_init();
     batt_poll();                                /* (a first reading, so the header has one from the start) */
@@ -2609,6 +2611,8 @@ static void app_main(void)
                 kb_note = (uint32_t)cl((int32_t)(base + kk), 13, 107);
                 key_cv = ((int32_t)kb_note - 60) * KEY_STEP;
                 if (srec) { seqpatch.note[scur] = (uint8_t)kb_note; scur = (scur + 1u) % seqpatch.len; }
+                else if (seq_run) seq_tr = (int32_t)kb_note - 60;   /* running: a key transposes the sequence */
+                else key_semi = (int32_t)kb_note - 60;
                 dirty = 1;
             }
             kb_keys_gate = keys != 0u;
@@ -2625,18 +2629,23 @@ static void app_main(void)
             }
             if ((e = fm1_enc_take(ENC_KNOB3)) != 0) { seqpatch.gate = (uint8_t)cl(seqpatch.gate + 2 * e, 5, 100); dirty = 1; }
             if (b & (1u << BTN_PLAY)) {
-                if (shift) {                    /* SEL + PLAY: pin KEYS and SEQ to every oscillator's pitch, or unpin */
-                    uint32_t on = !key_pinned(), o2;
-                    for (o2 = 0; o2 < NO; o2++) {
-                        depth[S_KEY][o2 * NP + P_PITCH] = (int8_t)(on ? 63 : 0);
-                        depth[S_SEQ][o2 * NP + P_PITCH] = (int8_t)(on ? 63 : 0);
-                    }
+                if (shift) {                    /* SEL + PLAY: TRACK on / off (kept with the VDU settings) */
+                    trk_on ^= 1u;
+                    gset.pad = (uint8_t)((gset.pad & ~1u) | (trk_on ? 0u : 1u));
+                    vdu_dirty = 1; t_vdu = fm1_ms;
                     sel_used = 1;
-                    hmsg = on ? "KEYS + SEQ: PITCH PINNED" : "PITCH UNPINNED"; t_hmsg = fm1_ms; hdr_dirty = 1;
+                    hmsg = trk_on ? "TRACK ON" : "TRACK OFF"; t_hmsg = fm1_ms; hdr_dirty = 1;
                 } else if (seq_run) { seq_run = 0; } else { seq_restart = 1; seq_run = 1; }
                 dirty = 1;
             }
-            if (b & (1u << BTN_REC)) { srec ^= 1u; dirty = 1; }
+            if (b & (1u << BTN_REC)) {
+                if (shift) {                    /* SEL + REC: a random patch; the sequence and TRACK go on */
+                    patch_load(P_RANDOM);
+                    sel_used = 1;
+                    hmsg = "RANDOM PATCH ROLLED"; t_hmsg = fm1_ms; hdr_dirty = 1;
+                } else srec ^= 1u;
+                dirty = 1;
+            }
             if (rel & (1u << BTN_SEL) && !sel_used) {   /* SEL alone: a rest here, or the note back */
                 seqpatch.note[scur] = seqpatch.note[scur] == 255u ? (uint8_t)kb_note : 255u;
                 dirty = 1;
