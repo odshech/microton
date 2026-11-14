@@ -108,10 +108,14 @@ typedef struct { int32_t size, decay, damp, ret, fb; } verb_mod_t;
 #define FB_LIM 6000                             /* the level the feedback backs off toward: a ring, not a scream */
 #endif
 static int32_t v_fbenv;
+static int32_t v_hl[4], v_hr[4];                /* HI-FI: the last four reverb samples, for the interpolation */
+/* HI-FI: Catmull-Rom between the reverb's samples (in place of holding them), weights /128 for t = 0, 1/4, 1/2,
+ * 3/4 of the way from v_h?[1] to v_h?[2] (two reverb samples late) */
+static const int16_t V_CR[4][4] = {{0, 128, 0, 0}, {-9, 111, 29, -3}, {-8, 72, 72, -8}, {-3, 29, 111, -9}};
 
 static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod_t *m, int32_t *wet)
 {
-    uint32_t i, div = vp.rate ? 4u : 2u, k, frz = vp.freeze | v_gate_freeze;
+    uint32_t i, div = vp.rate ? 4u : 2u, k, frz = vp.freeze | v_gate_freeze, hifi = !eng_half;
     int32_t size_k = cl(vp.size + (m->size >> 8), 0, 127), dec_k = cl(vp.decay + (m->decay >> 8), 0, 127);
     int32_t damp_k = cl(vp.damp + (m->damp >> 8), 0, 127), ret_k = cl(vp.ret + (m->ret >> 8), 0, 127);
     int32_t fb_k = cl(vp.fb + (m->fb >> 8), 0, 127);
@@ -132,6 +136,7 @@ static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod
     if (!v_ready) { for (i = 0; i < n; i++) wet[i] = 0; return; }   /* (not set up yet: the sound starts first) */
 
     for (i = 0; i < n; i++) {
+        uint32_t j = v_phase & (div - 1u);    /* (where this frame sits between the reverb's samples) */
         if ((v_phase++ & (div - 1u)) == 0u) {          /* a reverb sample: the input averaged over div frames */
             int32_t x = 0, y, lm, rm;
             for (k = 0; k < div && i + k < n; k++) x += in[i + k];
@@ -178,10 +183,21 @@ static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod
                 room = cl(FB_LIM - v_fbenv, 0, FB_LIM);
                 v_fb = (((f * fbg) >> 15) * ((room << 15) / FB_LIM)) >> 15;
             }
+            v_hl[0] = v_hl[1]; v_hl[1] = v_hl[2]; v_hl[2] = v_hl[3]; v_hl[3] = v_out_l;
+            v_hr[0] = v_hr[1]; v_hr[1] = v_hr[2]; v_hr[2] = v_hr[3]; v_hr[3] = v_out_r;
         }
+        if (hifi) {                             /* HI-FI: a smooth curve through the reverb's samples */
+            const int16_t *c = V_CR[div == 2u ? j * 2u : j];
+            int32_t yl = (v_hl[0] * c[0] + v_hl[1] * c[1] + v_hl[2] * c[2] + v_hl[3] * c[3]) >> 7;
+            int32_t yr = (v_hr[0] * c[0] + v_hr[1] * c[1] + v_hr[2] * c[2] + v_hr[3] * c[3]) >> 7;
+            out[2u * i] += (yl * ret) >> 15;
+            out[2u * i + 1u] += (yr * ret) >> 15;
+            wet[i] = (yl + yr) >> 1;
+        } else {
         out[2u * i] += (v_out_l * ret) >> 15;   /* held between the reverb's samples: the grit */
         out[2u * i + 1u] += (v_out_r * ret) >> 15;
         wet[i] = (v_out_l + v_out_r) >> 1;      /* (for the next in the chain) */
+        }
         {
             int32_t a = v_out_l < 0 ? -v_out_l : v_out_l;
             if (a > lvl) lvl = a;
@@ -221,6 +237,66 @@ static inline __attribute__((always_inline)) int32_t dl_frame(int32_t in, uint32
     return dl_lp;
 }
 
+/* ---- HI-FI: the delay as a clean line. DLH_N cells at 22.05 kHz (1.18 s); longer times slow the clock (2 s: 13 kHz,
+ * still clean). The read head is between cells (cubic), the input averaged into each cell, the output never
+ * held. The time glides (~0.1 s): a turned TIME bends the pitch like tape. In the loop a gentle high cut (~6.6 kHz)
+ * and the saturator: repeats that darken a little as they go, and never run away. */
+#define DLH_N 26000u
+static int16_t dlh_buf[DLH_N] __attribute__((section(".pool")));
+static uint32_t dlh_w, dlh_ph, dlh_c, dlh_d, dlh_n;   /* write cell; clock phase, step (Q16 cells a frame); distance (Q16) */
+static int32_t dlh_acc, dlh_lp;
+static inline __attribute__((always_inline)) int32_t dlh_read(uint32_t pos)   /* pos: Q16 cells, 0 .. N */
+{
+    uint32_t i = pos >> 16, f = (pos >> 4) & 4095u, i0 = i ? i - 1u : DLH_N - 1u, i2 = i + 1u, i3 = i + 2u;
+    int32_t y0, y1, y2, y3, a, b, c, ff = (int32_t)f;
+    if (i2 >= DLH_N) i2 -= DLH_N;
+    if (i3 >= DLH_N) i3 -= DLH_N;
+    y0 = dlh_buf[i0]; y1 = dlh_buf[i]; y2 = dlh_buf[i2]; y3 = dlh_buf[i3];
+    a = (3 * (y1 - y2) + y3 - y0) >> 1;          /* Catmull-Rom */
+    b = 2 * y2 + y0 - ((5 * y1 + y3) >> 1);
+    c = (y2 - y0) >> 1;
+    return y1 + ((((((a * ff) >> 12) + b) * ff >> 12) + c) * ff >> 12);   /* (f Q12: no overflow) */
+}
+/* the target for a time in ms (the LUT's): the clock's step and the distance */
+static void dlh_target(uint32_t ms, uint32_t *c, uint32_t *d)
+{
+    uint32_t t = ms * 441u / 10u;               /* frames */
+    if (t <= 2u * (DLH_N - 8u)) { *c = 32768u; *d = t << 15; }   /* 22.05 kHz, the distance in cells */
+    else { *c = ((DLH_N - 8u) << 16) / t; *d = (DLH_N - 8u) << 16; }   /* the whole line, a slower clock */
+}
+static void dlh_run(const int32_t *in, int32_t *out, int32_t *wet, uint32_t n, uint32_t ms, int32_t fbg, int32_t mask,
+                    int32_t ret)
+{
+    uint32_t i, ct, dt;
+    dlh_target(ms, &ct, &dt);
+    if (!dlh_c) { dlh_c = ct; dlh_d = dt; }     /* (the first block: no glide in from nothing) */
+    dlh_c += (uint32_t)((int32_t)(ct - dlh_c) >> 7);   /* ~0.1 s glides */
+    dlh_d += (uint32_t)((int32_t)(dt - dlh_d) >> 7);
+    for (i = 0; i < n; i++) {
+        uint32_t now, pos;
+        int32_t y, w;
+        dlh_acc += in[i]; dlh_n++;
+        dlh_ph += dlh_c;
+        now = (dlh_w << 16) + (dlh_ph & 0xFFFFu);  /* where the clock is, in cells */
+        pos = now + (DLH_N << 16) - dlh_d;
+        if (pos >= (DLH_N << 16)) pos -= DLH_N << 16;
+        y = dlh_read(pos);
+        if (dlh_ph >= 0x10000u) {               /* a tick: a new cell, the input averaged since the last, + feedback */
+            int32_t x = dlh_acc / (int32_t)dlh_n;
+            dlh_ph -= 0x10000u;
+            dlh_lp += ((y - dlh_lp) * 27853) >> 15;
+            dlh_buf[dlh_w] = qr16(softclip((x >> 1) + ((dlh_lp * fbg) >> 15)), mask);
+            if (++dlh_w >= DLH_N) dlh_w = 0;
+            dlh_acc = 0; dlh_n = 0;
+        }
+        w = (y * ret) >> 15;
+        out[2u * i] += w;
+        out[2u * i + 1u] += w;
+        wet[i] = y;
+    }
+    dl_w_v = dlh_w * DL_N / DLH_N;              /* (the screen's head, on its 2048) */
+}
+
 /* ---- the flanger: a short delay swept by its own triangle LFO, at 22 or 11 kHz (11: twice the time, grittier),
  * held between its samples as the others. Two taps swept in opposite directions: stereo. Feedback -..+ through the
  * saturator (- hollow and metallic, + the jet), at most ~0.9. Safe from the first interrupt: a static buffer. */
@@ -229,7 +305,7 @@ static int16_t fl_buf[2][FL_N] __attribute__((section(".pool")));   /* left and 
 typedef struct { volatile uint8_t rate, depth, manual, fb, ret, slow; } fl_par_t;
 static fl_par_t flp;
 static uint32_t fl_w, fl_lfo, fl_phase;
-static int32_t fl_hold_l, fl_hold_r;
+static int32_t fl_hold_l, fl_hold_r, fl_prev_l, fl_prev_r;
 static volatile int32_t fl_lfo_v;               /* the LFO's position, -32768..32767, for the screen */
 
 static inline __attribute__((always_inline)) int32_t fl_read(const int16_t *b, uint32_t d_q8)   /* d samples ago, Q8 */
@@ -256,15 +332,17 @@ static int32_t fl_manual(uint32_t k)            /* MANUAL 0..127 -> the centre, 
 /* in: the block's input (sends + the chain); wet: its output, mono, for the next in the chain; out: + the return */
 static void fl_run(const int32_t *in, int32_t *wet, int32_t *out, uint32_t n, const uint32_t *lut_rate)
 {
-    uint32_t i, k, div = flp.slow ? 4u : 2u;
-    uint32_t inc = lut_rate[flp.rate & 127u] >> (flp.slow ? 3u : 4u);   /* the LUT is a step per 32 frames */
-    int32_t man = fl_manual(flp.manual);
+    uint32_t hifi = !eng_half, i, k, div = (flp.slow ? 4u : 2u) >> hifi;   /* (HI-FI: twice the rate, twice the taps) */
+    uint32_t inc = lut_rate[flp.rate & 127u] >> ((flp.slow ? 3u : 4u) + hifi);   /* the LUT is a step per 32 frames */
+    int32_t man = fl_manual(flp.manual) << hifi;
     int32_t span = (int32_t)flp.depth * 512 / 127;                     /* the sweep: up to +-2 octaves, Q8 */
     int32_t fbg = ((int32_t)flp.fb - 64) * (32100 / 63), ret = (int32_t)flp.ret * flp.ret * 2;
     const int32_t lo = 256, hi = (int32_t)(FL_N - 4u) << 8;
     for (i = 0; i < n; i++) {
+        uint32_t j = fl_phase & (div - 1u);
         if ((fl_phase++ & (div - 1u)) == 0u) {
             int32_t x = 0, t, tri, e, yl, yr;
+            fl_prev_l = fl_hold_l; fl_prev_r = fl_hold_r;
             for (k = 0; k < div && i + k < n; k++) x += in[i + k];
             x /= (int32_t)div;
             fl_lfo += inc;
@@ -279,6 +357,13 @@ static void fl_run(const int32_t *in, int32_t *wet, int32_t *out, uint32_t n, co
             fl_hold_l = softclip(4 * yl);         /* the swept echo alone: it combs against the dry voices */
             fl_hold_r = softclip(4 * yr);         /* in the main mix, so the notches go all the way down */
             fl_lfo_v = tri;
+        }
+        if (hifi && div == 2u) {                /* HI-FI, SLOW: halfway between the samples, not held */
+            int32_t yl = j ? (fl_prev_l + fl_hold_l) >> 1 : fl_prev_l, yr = j ? (fl_prev_r + fl_hold_r) >> 1 : fl_prev_r;
+            out[2u * i] += (yl * ret) >> 15;
+            out[2u * i + 1u] += (yr * ret) >> 15;
+            wet[i] = (yl + yr) >> 1;
+            continue;
         }
         out[2u * i] += (fl_hold_l * ret) >> 15;
         out[2u * i + 1u] += (fl_hold_r * ret) >> 15;

@@ -43,7 +43,7 @@ Eleven pages, each reachable from the index or its shortcut button.
 | 6 GATE GEN | LFO | Four gate generators: two square LFOs each (free or MIDI clock, rate, duty) into AND, NAND, OR, NOR, XOR, XNOR, plus a NOT. Shown as a live logic analyser. |
 | 7 MOD MATRIX | ARP | The EMS-style pin grid: 12 sources by every destination. K1 source, K2 destination, K3 depth (±), PLAY sets or pulls a pin. |
 | 8 GATE MATRIX | SEQ | Gate sources (logic outputs, EOCs, quantiser note gates) to gate destinations (FGs, S&Hs, logic inputs, reverb freeze). Pins light with live gate state. |
-| 9 GLOBAL | GLO | TUNING: 21 tunings and their scales, root, per-oscillator quantise and glide. OCT for VDU: phosphor colour, CRT brightness, the engine (K3: LO-FI as above, or HI-FI: 16 bit, 44.1kHz, interpolated), the CPU load, a test card. |
+| 9 GLOBAL | GLO | TUNING: 21 tunings and their scales, root, per-oscillator quantise and glide. OCT for VDU: phosphor colour, CRT brightness, the engine (K3: LO-FI as above, or HI-FI: 16 bit, 44.1kHz, band-limited 16-bit tables, the voices at 88.2kHz so PM and the folders do not alias, a smooth reverb, a clean delay line up to 2 s, the flanger at full rate), the CPU load, a test card. |
 | R FX | FX | Four halves, stepped with FX or OCT: REVERB (a low-rate plate, freeze), DELAY (a shift register), FLANGER (its own LFO, 22 / 11k) and ROUTING (the order of the three, and links between them). Each effect has its own send per oscillator. |
 | D DISK | SAVE | A:\SYSTEM holds INIT and RANDOM, B:\PATCHES your 16 slots. SEL loads, SAVE saves (twice to overwrite), PLAY names a patch. |
 

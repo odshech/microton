@@ -71,6 +71,8 @@ typedef struct {                                /* owned by the interrupt */
     uint32_t ph;
     volatile int32_t posq;                      /* wave position now, Q8 waves (the waveform page reads it) */
     int32_t amp, lp1, lp2, last;
+    int32_t hb[32];                             /* HI-FI: the last 32 samples at 88.2 kHz, for the decimator */
+    uint32_t hbp;
 } osc_st_t;
 static osc_par_t opar[NO];
 static volatile uint8_t g_tun, g_scl, g_root;   /* the global tuning, scale (an index into SCL_*), root (0..11) */
@@ -233,6 +235,54 @@ static int32_t quantise(int32_t q, int32_t *id, int32_t *stepn)
     return (int32_t)g_root * 256 + k * per + bv;
 }
 
+/* HI-FI: the voices run at 88.2 kHz; this half-band filter (31 taps, Kaiser) brings them down to 44.1 kHz:
+ * flat to ~18 kHz, -26 dB at 26 kHz (what folds to 18 kHz), -110 dB past 30 kHz. h[] Q15: the odd taps either side
+ * of the centre (the even ones are 0, the centre 0.5). Latency: 7.5 frames, the same for every voice. */
+static const int16_t HB_H[8] = {10281, -3050, 1441, -708, 321, -124, 35, -4};
+static inline __attribute__((always_inline)) int32_t hb_out(const int32_t *b, uint32_t p)   /* b[p]: the newest */
+{
+    uint32_t c = p - 15u, k;
+    int32_t a = b[c & 31u] << 14;
+    for (k = 0; k < 8u; k++) a += HB_H[k] * (b[(c - 2u * k - 1u) & 31u] + b[(c + 2u * k + 1u) & 31u]);
+    return a >> 15;
+}
+#define OSC_READ(X_) do { \
+            if (th[o] && half) {                 /* LO-FI: the 8-bit wave, the nearest sample: PPG grit */         \
+                const int16_t *h0 = th[o] + w * WT_SAMPLES, *h1 = w + 1u < WT_WAVES ? h0 + WT_SAMPLES : h0;        \
+                idx = ph >> 25;                                                                                    \
+                X_ = ((((int32_t)h0[idx] + 64) >> 7) * (int32_t)(256u - frac)                                      \
+                     + (((int32_t)h1[idx] + 64) >> 7) * (int32_t)frac + qh) & qm;   /* +-32512 */                  \
+            } else if (th[o]) {                  /* HI-FI: 16 bit, band-limited, linear between the samples */     \
+                uint32_t sh = lsh[o], ns = 1u << (32u - sh), i2;                                                   \
+                const int16_t *h0 = th[o] + w * ns, *h1 = w + 1u < WT_WAVES ? h0 + ns : h0;                        \
+                int32_t a0, a1, f2;                                                                                \
+                idx = ph >> sh; i2 = (idx + 1u) & (ns - 1u);                                                       \
+                f2 = (int32_t)((ph >> (sh - 8u)) & 255u);                                                          \
+                a0 = ((int32_t)h0[idx] * (int32_t)(256u - frac) + (int32_t)h1[idx] * (int32_t)frac) >> 7;          \
+                a1 = ((int32_t)h0[i2] * (int32_t)(256u - frac) + (int32_t)h1[i2] * (int32_t)frac) >> 7;            \
+                X_ = a0 + (((a1 - a0) * f2) >> 8);                                                                 \
+            } else {                             /* the generative table (8-bit) */                                \
+                const int8_t *w0 = tab[o] + w * WT_SAMPLES, *w1 = w + 1u < WT_WAVES ? w0 + WT_SAMPLES : w0;        \
+                idx = ph >> 25;                                                                                    \
+                if (half)                                                                                          \
+                    X_ = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm; \
+                else {                                                                                             \
+                    uint32_t i2 = (idx + 1u) & 127u;                                                               \
+                    int32_t f2 = (int32_t)((ph >> 17) & 255u);                                                     \
+                    int32_t a0 = (int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac;     \
+                    int32_t a1 = (int32_t)w0[i2] * (int32_t)(256u - frac) + (int32_t)w1[i2] * (int32_t)frac;       \
+                    X_ = a0 + (((a1 - a0) * f2) >> 8);                                                             \
+                }                                                                                                  \
+            }                                                                                                      \
+} while (0)
+#define OSC_FOLD(X_) do { \
+            if (o >= 2u) {                       /* the wavefolder */ \
+                int32_t y = (X_ * fg_g[o]) >> 8, t = fg_t[o], n;      \
+                for (n = 0; n < 24 && (y > t || y < -t); n++)         \
+                    y = y > t ? 2 * t - y : -2 * t - y;               \
+                X_ = (((y * fg_mk[o]) >> 12) + qh) & qm;              \
+            }                                                         \
+} while (0)
 static void render(int32_t *out)                /* SUB frames */
 {
     int32_t acc[NDST], src[NSRC];
@@ -365,7 +415,7 @@ static void render(int32_t *out)                /* SUB frames */
             inc[o] = pitch_inc(pq + p->fine_q8) << half;   /* (at 22 kHz: twice the step, every other frame) */
         }
         if (!tab[o]) {
-            uint32_t l = half ? 0u : lev_for(inc[o]);
+            uint32_t l = half ? 0u : lev_for(inc[o] >> 1);   /* (HI-FI runs the voices at 88.2 kHz) */
             th[o] = lev_of(p->table, l);
             lsh[o] = 25u + l;                   /* the phase's top bits: the sample */
         } else th[o] = 0;
@@ -402,46 +452,30 @@ static void render(int32_t *out)                /* SUB frames */
             osc_st_t *s = &ost[o];
             uint32_t ph, idx, w, frac;
             int32_t x, v;
+            uint32_t pmt = 0;
             s->ph += inc[o];
-            ph = s->ph;
-            if (o == 0u) ph += (uint32_t)(prev1 * pm[0]) << 6;           /* phase modulation (wraps: fine) */
-            else if (o == 1u) ph += (uint32_t)(prev0 * pm[1]) << 6;
+            if (o == 0u) pmt = (uint32_t)(prev1 * pm[0]) << 6;           /* phase modulation (wraps: fine) */
+            else if (o == 1u) pmt = (uint32_t)(prev0 * pm[1]) << 6;
             if (step[o]) { w = ((uint32_t)s->posq + 128u) >> 8; frac = 0; }   /* stepped: one wave, then the next */
             else { w = (uint32_t)s->posq >> 8; frac = (uint32_t)s->posq & 255u; }
-            if (th[o] && half) {                 /* LO-FI: the 8-bit wave, the nearest sample: PPG grit */
-                const int16_t *h0 = th[o] + w * WT_SAMPLES, *h1 = w + 1u < WT_WAVES ? h0 + WT_SAMPLES : h0;
-                idx = ph >> 25;
-                x = ((((int32_t)h0[idx] + 64) >> 7) * (int32_t)(256u - frac)
-                     + (((int32_t)h1[idx] + 64) >> 7) * (int32_t)frac + qh) & qm;   /* +-32512 */
-            } else if (th[o]) {                  /* HI-FI: 16 bit, band-limited, linear between the samples */
-                uint32_t sh = lsh[o], ns = 1u << (32u - sh), i2;
-                const int16_t *h0 = th[o] + w * ns, *h1 = w + 1u < WT_WAVES ? h0 + ns : h0;
-                int32_t a0, a1, f2;
-                idx = ph >> sh; i2 = (idx + 1u) & (ns - 1u);
-                f2 = (int32_t)((ph >> (sh - 8u)) & 255u);
-                a0 = ((int32_t)h0[idx] * (int32_t)(256u - frac) + (int32_t)h1[idx] * (int32_t)frac) >> 7;
-                a1 = ((int32_t)h0[i2] * (int32_t)(256u - frac) + (int32_t)h1[i2] * (int32_t)frac) >> 7;
-                x = a0 + (((a1 - a0) * f2) >> 8);
-            } else {                             /* the generative table (8-bit) */
-                const int8_t *w0 = tab[o] + w * WT_SAMPLES, *w1 = w + 1u < WT_WAVES ? w0 + WT_SAMPLES : w0;
-                idx = ph >> 25;
-                if (half)
-                    x = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm;
-                else {
-                    uint32_t i2 = (idx + 1u) & 127u;
-                    int32_t f2 = (int32_t)((ph >> 17) & 255u);
-                    int32_t a0 = (int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac;
-                    int32_t a1 = (int32_t)w0[i2] * (int32_t)(256u - frac) + (int32_t)w1[i2] * (int32_t)frac;
-                    x = a0 + (((a1 - a0) * f2) >> 8);
-                }
+            if (half) {                          /* LO-FI: one sample a frame (each frame held twice: 22 kHz) */
+                ph = s->ph + pmt;
+                OSC_READ(x);
+                OSC_FOLD(x);
+                s->last = x;
+            } else {                             /* HI-FI: two samples a frame (88.2 kHz), PM and the folder too, */
+                int32_t xa;                      /* then down through a half-band filter: they no longer alias */
+                ph = s->ph - (inc[o] >> 1) + pmt;
+                OSC_READ(xa);
+                OSC_FOLD(xa);
+                ph = s->ph + pmt;
+                OSC_READ(x);
+                OSC_FOLD(x);
+                s->last = x;
+                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = xa;
+                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = x;
+                x = hb_out(s->hb, s->hbp);
             }
-            if (o >= 2u) {                       /* the wavefolder */
-                int32_t y = (x * fg_g[o]) >> 8, t = fg_t[o], n;
-                for (n = 0; n < 24 && (y > t || y < -t); n++)
-                    y = y > t ? 2 * t - y : -2 * t - y;
-                x = (((y * fg_mk[o]) >> 12) + qh) & qm;
-            }
-            s->last = x;
             if (hc[o] < 127) {                   /* the hi cut: two one-poles, 12 dB */
                 int32_t c = hcc[o];
                 s->lp1 = (s->lp1 + (((x - s->lp1) * c) >> 15) + qh) & qm;   /* (short words: the state too) */
@@ -485,6 +519,10 @@ static void render(int32_t *out)                /* SUB frames */
                 int32_t fbg = cl(dlp.fb + (acc[D_VERB(2)] >> 8), 0, 127) * (DL_FB_MAX / 127), ret = (int32_t)dlp.ret * dlp.ret * 2;
                 int32_t mask = ~((1 << (dlp.crush > 10u ? 10u : dlp.crush)) - 1) & qm;
                 int32_t lpc = (int32_t)cl((int32_t)(dinc >> 16), 600, 32767);   /* the cutoff follows the clock */
+                if (!half) {                    /* HI-FI: the clean line */
+                    dlh_run(x, out, wet, SUB, LUT_DMS[cl(dlp.time + (acc[D_VERB(0)] >> 8), 0, 127)], fbg, mask, ret);
+                    continue;
+                }
                 for (i = 0; i < SUB; i++) {
                     int32_t y = dl_frame(x[i], dinc, fbg, mask, lpc), w = (y * ret) >> 15;
                     out[2u * i] += w;
@@ -2554,6 +2592,7 @@ static void app_main(void)
             if ((e = fm1_enc_take(ENC_KNOB2)) != 0) { gset.bright = (uint8_t)cl(gset.bright + e, 0, 10); ch = 1; }
             if ((e = fm1_enc_take(ENC_KNOB3)) != 0 && (uint32_t)(e > 0) != (gset.eng & 1u)) {   /* the engine */
                 gset.eng = (uint8_t)(e > 0);
+                if (gset.eng) { uint32_t z; for (z = 0; z < DLH_N; z++) dlh_buf[z] = 0; }   /* (HI-FI delay: from silence) */
                 push_eng();
                 cpu_peak = 0; audio_us_max = 0;
                 dirty = 1; vdu_dirty = 1; t_vdu = fm1_ms;
