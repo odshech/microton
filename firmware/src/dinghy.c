@@ -672,6 +672,7 @@ static void push_verb(void)
     vp.size = vpatch.size; vp.decay = vpatch.decay; vp.damp = vpatch.damp; vp.pre = vpatch.pre;
     vp.mod = vpatch.mod; vp.crush = vpatch.crush; vp.ret = vpatch.ret; vp.fb = vpatch.fb;
     vp.rate = vpatch.rate; vp.freeze = vpatch.freeze;
+    v_type = vpatch.pad[0] & 1u;                /* (pad[0]: the type, PLATE / SPACE; zero in older patches) */
 }
 static void push_tun(void)
 {
@@ -1032,7 +1033,7 @@ static int patch_load(uint32_t slot)            /* 0 = the default */
         vpatch_t *v = &vpatch;
         for (k = 0; k < NO; k++) v->send[k] &= 127u;
         v->size &= 127u; v->decay &= 127u; v->damp &= 127u; v->pre &= 127u; v->mod &= 127u;
-        v->crush = (uint8_t)cl(v->crush, 0, 10); v->ret &= 127u; v->fb &= 127u; v->rate &= 1u; v->freeze &= 1u;
+        v->crush = (uint8_t)cl(v->crush, 0, 10); v->ret &= 127u; v->fb &= 127u; v->rate &= 1u; v->freeze &= 1u; v->pad[0] &= 1u; v->pad[1] = 0;
         push_verb();
     }
     {
@@ -2108,6 +2109,7 @@ static void draw_verb(uint32_t vsel, int shift)
         cv_text(x + 112 - 4 - text_w(&FONT_S, s), y, &FONT_S, s, hot ? PH_HI : PH_MID);
     }
     cv_text(4, 98, &FONT_S, vpatch.rate ? "RATE 11K" : "RATE 22K", PH_MID);
+    cv_text(92, 98, &FONT_S, vpatch.pad[0] & 1u ? "SPACE" : "PLATE", (vpatch.pad[0] & 1u) ? PH_HI : PH_MID);
     cv_text(236 - text_w(&FONT_S, "FREEZE"), 98, &FONT_S, "FREEZE", frz ? PH_HI : PH_LO);
     cv_rect(0, 116, 240, 1, PH_LO);
     for (i = 0; i < HIST; i++) {                /* the tail: its level, oldest on the left */
@@ -2767,7 +2769,11 @@ static void app_main(void)
                 }
             if ((e = fm1_enc_take(ENC_SELECT)) != 0) { vsel = (uint32_t)cl((int32_t)vsel + e, 0, NO - 1); dirty = 1; }
             if ((e = fm1_enc_take(ENC_ALGORITHM)) != 0) { vpatch.send[vsel] = (uint8_t)cl(vpatch.send[vsel] + e, 0, 127); ch = 1; }
-            if ((e = fm1_enc_take(ENC_PRESETS)) != 0) { vpatch.rate = e > 0; ch = 1; }
+            if ((e = fm1_enc_take(ENC_PRESETS)) != 0) {
+                if (shift) vpatch.pad[0] = e > 0;  /* SEL + PRESETS: the type, PLATE / SPACE */
+                else vpatch.rate = e > 0;
+                ch = 1;
+            }
             if (b & (1u << BTN_PLAY)) { vpatch.freeze ^= 1u; ch = 1; }
             if (ch) { push_verb(); dirty = 1; }
         } else if (page == PG_GLOBAL && gsub) {  /* the VDU: applied at once, saved 2 s after the last turn */

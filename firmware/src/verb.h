@@ -23,10 +23,22 @@ static const int16_t V_AP_G[V_NAP] = {24576, 24576, 20480, 20480};   /* 0.75, 0.
 #define V_PRE 4096u                             /* the pre-delay, up to ~190 ms at 22 kHz */
 
 typedef struct { int16_t *b; uint32_t len, w; } vline_t;
+/* SPACE: a second reverb in the same memory (the plate's tank): four long lines with a Householder matrix between
+ * them (a feedback delay network), each swept by its own phase of a slow LFO and damped on its way round. Wide,
+ * dense and dark, a space rather than a plate; inspired by the spatial effects of small synths (Korg's "Space Out"
+ * on the volca modular), not a copy of one. The same knobs as the plate. */
+#define S_NL 4u
+static const uint16_t S_LEN[S_NL] = {2203, 2687, 3229, 3917};   /* (at 22 kHz: 100 .. 178 ms, mutually prime-ish) */
+#define S_EXC 40u                               /* the lines' sweep at MOD 127: +-20 samples */
 
 static int16_t v_mem[142 + 107 + 379 + 277 + (V_MAPL + V_EXC + 2) + (V_MAPR + V_EXC + 2) + V_D1L + V_APL + V_D2L
                      + V_D1R + V_APR + V_D2R + V_PRE] __attribute__((section(".pool")));
 static vline_t v_ap[V_NAP], v_mapl, v_mapr, v_d1l, v_apl, v_d2l, v_d1r, v_apr, v_d2r, v_pre;
+static vline_t s_ln[S_NL];                      /* SPACE's lines: over the plate's tank (one or the other runs) */
+static int32_t s_lp[S_NL];
+static int16_t *v_tank_lo, *v_tank_hi;          /* the shared memory: cleared when the type changes */
+static volatile uint8_t v_type;                 /* 0 PLATE, 1 SPACE: set by the main loop */
+static uint8_t v_type_run;
 
 typedef struct {                                /* set by the main loop (knob units 0..127) */
     volatile uint8_t size, decay, damp, pre, mod, crush, ret, fb, rate, freeze;
@@ -55,7 +67,13 @@ static void verb_init(void)
     vline_init(&v_mapr, &m, V_MAPR + V_EXC + 2u);
     vline_init(&v_d1l, &m, V_D1L); vline_init(&v_apl, &m, V_APL); vline_init(&v_d2l, &m, V_D2L);
     vline_init(&v_d1r, &m, V_D1R); vline_init(&v_apr, &m, V_APR); vline_init(&v_d2r, &m, V_D2R);
+    v_tank_hi = m;                              /* (the tank ends here: the pre-delay follows) */
     vline_init(&v_pre, &m, V_PRE);
+    v_tank_lo = v_mapl.b;
+    {
+        int16_t *m2 = v_tank_lo;
+        for (i = 0; i < S_NL; i++) vline_init(&s_ln[i], &m2, S_LEN[i] + S_EXC + 2u);
+    }
     v_ready = 1;                                /* (last: the lines are all in place) */
 }
 
@@ -89,6 +107,11 @@ static inline __attribute__((always_inline)) int32_t vallpass_frac(vline_t *l, u
     int32_t u = x - ((del * g) >> 15);
     vwrite(l, u, mask);
     return del + ((u * g) >> 15);
+}
+static inline __attribute__((always_inline)) int32_t vread_frac(const vline_t *l, uint32_t d_q8)   /* d Q8 samples ago */
+{
+    uint32_t d = d_q8 >> 8, f = d_q8 & 255u;
+    return (vread(l, d) * (int32_t)(256u - f) + vread(l, d + 1u) * (int32_t)f) >> 8;
 }
 static inline __attribute__((always_inline)) int32_t softclip(int32_t x)              /* x - x^3 / 3 on the clamped input: never more than 2/3 full scale */
 {
@@ -134,6 +157,13 @@ static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod
 #define TAP(len) (((len) * (uint32_t)sz >> 15) + 1u)
     int32_t lvl = 0;
     if (!v_ready) { for (i = 0; i < n; i++) wet[i] = 0; return; }   /* (not set up yet: the sound starts first) */
+    if (v_type != v_type_run) {                 /* a new type: the shared memory from silence (once) */
+        int16_t *p;
+        for (p = v_tank_lo; p < v_tank_hi; p++) *p = 0;
+        v_type_run = v_type;
+        v_last_l = v_last_r = v_damp_l = v_damp_r = 0;
+        for (k = 0; k < S_NL; k++) s_lp[k] = 0;
+    }
 
     for (i = 0; i < n; i++) {
         uint32_t j = v_phase & (div - 1u);    /* (where this frame sits between the reverb's samples) */
@@ -148,6 +178,23 @@ static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod
             x = v_bw;
             for (k = 0; k < V_NAP; k++) x = vallpass(&v_ap[k], V_AP_LEN[k], V_AP_G[k], x, -1);
             v_lfo += 0x00A00000u;               /* the tank's slow wobble (~0.6 Hz at 22 kHz) */
+            if (v_type_run) {                   /* SPACE */
+                int32_t yy[S_NL], sum;
+                uint32_t sx = (uint32_t)vp.mod * 81u;   /* the sweep, Q8 samples: 0 .. ~40 */
+                for (k = 0; k < S_NL; k++) {
+                    uint32_t mk = ((uint32_t)(sine(v_lfo + k * 0x40000000u + (k & 1u) * 0x13000000u) + 32768) * sx) >> 16;
+                    yy[k] = vread_frac(&s_ln[k], ((S_LEN[k] * (uint32_t)sz >> 15) << 8) + mk + 256u);
+                    s_lp[k] = yy[k] + (((s_lp[k] - yy[k]) * damp) >> 15);
+                }
+                sum = (s_lp[0] + s_lp[1] + s_lp[2] + s_lp[3]) >> 1;   /* Householder: each line less half the sum */
+                for (k = 0; k < S_NL; k++) {
+                    int32_t in = k & 1u ? -x : x;
+                    vwrite(&s_ln[k], softclip(((in * 3) >> 2) + (((s_lp[k] - sum) * decay) >> 15)), mask);
+                }
+                v_out_l = (yy[0] + yy[2] - (yy[1] >> 1)) * 5 >> 3;
+                v_out_r = (yy[1] + yy[3] - (yy[2] >> 1)) * 5 >> 3;
+                goto v_fbk;
+            }
             lm = (int32_t)((((uint32_t)(sine(v_lfo) + 32768) * exc) >> 16));
             rm = (int32_t)((((uint32_t)(sine(v_lfo + 0x40000000u) + 32768) * exc) >> 16));
             /* the left half of the tank */
@@ -177,6 +224,7 @@ static void verb_run(const int32_t *in, int32_t *out, uint32_t n, const verb_mod
             v_out_r = (vread(&v_d1l, TAP(353)) + vread(&v_d1l, TAP(3627)) - vread(&v_apl, TAP(1228))
                        + vread(&v_d2l, TAP(2673)) - vread(&v_d1r, TAP(2111)) - vread(&v_apr, TAP(335))
                        - vread(&v_d2r, TAP(121))) * 3 >> 3;
+        v_fbk:
             {                                   /* back into the input next time, less as it rings louder */
                 int32_t f = (v_out_l + v_out_r) >> 1, a = f < 0 ? -f : f, room;
                 if (a > v_fbenv) v_fbenv += (a - v_fbenv) >> 4; else v_fbenv -= (v_fbenv - a) >> 11;
