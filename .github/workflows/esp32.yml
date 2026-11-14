@@ -1,0 +1,50 @@
+# Builds dagnazty's fm1-esp32-unbrick for an ESP32-S3 dev board with two USB-C ports, and packs everything the
+# recovery needs on the computer. The result is a workflow artifact (signed-in download), not a public file: JieLi's
+# flash loader inside the firmware is not ours to redistribute.
+name: esp32-unbrick
+
+on:
+  push:
+    branches: [esp32-unbrick]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The parts this repository doesn't ship
+        run: |
+          git clone -q https://github.com/kagaimiq/jl-uboot-tool.git third_party/jl-uboot-tool
+          git -C third_party/jl-uboot-tool checkout -q adb3f18889e88ac512ce0a3c4d8cc3d3cb30696a
+          echo "d41da6126760c9d66660bcc0cac8d27d221806c5e369a8036921efe68dca5376  third_party/jl-uboot-tool/data/loaderblobs/usb/wl82loader.bin" | sha256sum -c
+          cp third_party/jl-uboot-tool/data/loaderblobs/usb/wl82loader.bin main/
+          # MvaveFM1Unbricker 1.4.0 (main, 2026-11-12): it accepts the newer flash chip (0xB36014)
+          git clone -q https://github.com/Quixotic7/MvaveFM1Unbricker.git third_party/MvaveFM1Unbricker
+          git -C third_party/MvaveFM1Unbricker checkout -q 331f848
+
+      - name: Build (ESP-IDF v5.4.1, ESP32-S3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32s3
+
+      - name: One file to flash at 0x0, and the computer side
+        run: |
+          pip install -q esptool
+          o=out/fm1-rescue
+          mkdir -p $o/tools $o/third_party/MvaveFM1Unbricker
+          (cd build && python3 -m esptool --chip esp32s3 merge_bin -o ../$o/fm1-esp32-unbrick.bin @flash_args)
+          cp tools/esp32_recover.py tools/make_image.py $o/tools/
+          cp third_party/MvaveFM1Unbricker/*.py third_party/MvaveFM1Unbricker/LICENSE third_party/MvaveFM1Unbricker/README.md \
+             $o/third_party/MvaveFM1Unbricker/
+          cp LICENSE $o/LICENSE-fm1-esp32-unbrick
+          ls -la $o $o/tools
+          sha256sum $o/fm1-esp32-unbrick.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fm1-rescue
+          path: out/
+          if-no-files-found: error
