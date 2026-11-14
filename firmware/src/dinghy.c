@@ -398,7 +398,15 @@ static void render(int32_t *out)                /* SUB frames */
             else { w = (uint32_t)s->posq >> 8; frac = (uint32_t)s->posq & 255u; }
             w0 = tab[o] + w * WT_SAMPLES;
             w1 = w + 1u < WT_WAVES ? w0 + WT_SAMPLES : w0;
-            x = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm;   /* +-32512 */
+            if (half)                            /* LO-FI: the nearest sample */
+                x = ((int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac + qh) & qm;   /* +-32512 */
+            else {                               /* HI-FI: linear between the samples too */
+                uint32_t i2 = (idx + 1u) & 127u;
+                int32_t f2 = (int32_t)((ph >> 17) & 255u);
+                int32_t a0 = (int32_t)w0[idx] * (int32_t)(256u - frac) + (int32_t)w1[idx] * (int32_t)frac;
+                int32_t a1 = (int32_t)w0[i2] * (int32_t)(256u - frac) + (int32_t)w1[i2] * (int32_t)frac;
+                x = a0 + (((a1 - a0) * f2) >> 8);
+            }
             if (o >= 2u) {                       /* the wavefolder */
                 int32_t y = (x * fg_g[o]) >> 8, t = fg_t[o], n;
                 for (n = 0; n < 24 && (y > t || y < -t); n++)
@@ -1168,9 +1176,17 @@ static const uint8_t PHOS_K[NPHOS][7][4] = {    /* intensity, r, g, b: each phos
     {{0, 0, 0, 0}, {20, 15, 16, 19}, {60, 54, 57, 64}, {110, 106, 110, 120}, {170, 176, 180, 192}, {230, 234, 238, 246},
      {255, 255, 255, 255}},
 };
-typedef struct { uint32_t boots; uint8_t phos, bright, eng, pad; } settings_t;   /* eng: bit 0 8-bit, bit 1 22 kHz */
+typedef struct { uint32_t boots; uint8_t phos, bright, eng, pad; } settings_t;   /* eng: 0 LO-FI, 1 HI-FI */
 static settings_t gset = {0, 0, 7, 0, 0};
-static void push_eng(void) { eng_mask = ~15; eng_half = 1; }   /* native: 12 bit, 22.05 kHz (eng: unused now) */
+static void push_eng(void)                      /* eng 0 LO-FI: 12 bit, 22.05 kHz, stepped (Arcturus as it was);
+                                                   eng 1 HI-FI: 16 bit, 44.1 kHz, linear between the samples */
+{
+    if (gset.eng & 1u) { eng_mask = ~0; eng_half = 0; }
+    else { eng_mask = ~15; eng_half = 1; }
+}
+static const char *const ENG_NAME[2] = {"LO-FI", "HI-FI"};
+#define AUDIO_BUDGET_US 5805u                   /* 256 frames at 44.1 kHz */
+static uint32_t cpu_now, cpu_peak;              /* % of the budget: the last 250 ms, the most since the engine changed */
 static uint16_t CRT_TF[257];                    /* the light's gain over the radius: 256 in the middle .. 0 the corners */
 
 static void settings_store(void)                /* the VDU settings to flash, faded as a patch save */
@@ -1787,22 +1803,29 @@ static void draw_vdu(void)                      /* page 9's other half: the phos
     cv_text(108, 20, &FONT_S, s, PH_HI);
     for (i = 0; i <= 10u; i++)                  /* the brightness as a row of ticks */
         cv_rect(140 + (int32_t)i * 9, 24, 6, 8, i <= gset.bright ? PH_MID : PH_LO);
-    cv_rect(0, 39, 240, 1, PH_LO);
+    cv_text(4, 38, &FONT_S, "ENGINE", PH_LO);
+    cv_text(108, 38, &FONT_S, ENG_NAME[gset.eng & 1u], PH_HI);
+    cv_text(4, 56, &FONT_S, "CPU", PH_LO);
+    s[0] = 0; s_int(s, (int32_t)cpu_now, 0); s_cat(s, "%  PEAK "); s_int(s, (int32_t)cpu_peak, 0); s_cat(s, "%");
+    cv_text(108, 56, &FONT_S, s, cpu_peak >= 85u ? PH_HI : PH_MID);
+    for (i = 0; i < 10u; i++)                   /* the load as a row of ticks (each 10%) */
+        cv_rect(108 + (int32_t)i * 12, 74, 9, 4, i * 10u < cpu_now ? (i >= 8u ? PH_HI : PH_MID) : PH_LO);
+    cv_rect(0, 82, 240, 1, PH_LO);
     /* the test card: a frame, a cross-hatch, a circle, eight grey steps (the ramp) and a sweep */
-    cv_rect(6, 46, 228, 1, PH_MID); cv_rect(6, 194, 228, 1, PH_MID);
-    cv_rect(6, 46, 1, 149, PH_MID); cv_rect(233, 46, 1, 149, PH_MID);
+    cv_rect(6, 88, 228, 1, PH_MID); cv_rect(6, 194, 228, 1, PH_MID);
+    cv_rect(6, 88, 1, 107, PH_MID); cv_rect(233, 88, 1, 107, PH_MID);
     for (i = 1; i < 8u; i++) {
         uint32_t k;
-        for (k = 48; k < 194u; k += 3u) cv_pset(6 + (int32_t)i * 29, (int32_t)k, PH_LO);
-        for (k = 8; k < 233u; k += 3u) if (i < 6u) cv_pset((int32_t)k, 46 + (int32_t)i * 25, PH_LO);
+        for (k = 90; k < 194u; k += 3u) cv_pset(6 + (int32_t)i * 29, (int32_t)k, PH_LO);
+        for (k = 8; k < 233u; k += 3u) if (i < 6u) cv_pset((int32_t)k, 88 + (int32_t)i * 18, PH_LO);
     }
     for (i = 0; i < 128u; i++)
-        cv_pset(120 + ((sine(i << 25) * 52) >> 15), 120 - ((sine((i << 25) + 0x40000000u) * 52) >> 15), PH_HI);
+        cv_pset(120 + ((sine(i << 25) * 46) >> 15), 141 - ((sine((i << 25) + 0x40000000u) * 46) >> 15), PH_HI);
     for (i = 0; i < 8u; i++)                    /* the steps, dim to bright */
-        cv_rect(24 + (int32_t)i * 24, 104, 20, 32, RGB(0, 32 + i * 31, 0));
+        cv_rect(24 + (int32_t)i * 24, 128, 20, 22, RGB(0, 32 + i * 31, 0));
     for (i = 0; i < 192u; i++)                  /* a sine sweep, bright */
-        cv_pset(24 + (int32_t)i, 160 - ((sine(i * 0x05555555u) * 14) >> 15), PH_HI);
-    cv_text(2, 200, &FONT_S, "K1 PHOSPHOR  K2 BRIGHTNESS", PH_LO);
+        cv_pset(24 + (int32_t)i, 176 - ((sine(i * 0x05555555u) * 10) >> 15), PH_HI);
+    cv_text(2, 200, &FONT_S, "K1 PHOS  K2 BRIGHT  K3 ENGINE", PH_LO);
     cv_out(BODY_Y);
 }
 
@@ -2184,14 +2207,14 @@ static void app_main(void)
     uint32_t rk_prev = 0, rk_arm = 0, t_hmsg = 0, idx_blink = 0;
     uint32_t dirty = 1, hdr_dirty = 1, batt_shown = 0xFFFFu, t_batt = 0, t_banim = 0, t_live = 0, pcur = 1, pconf = PC_NONE, t_msg = 0;
     const char *pmsg = "";
-    uint32_t gsel = 0, gcc = 0, gcr = 0, gtop = 0, gleft = 0, t_hist = 0, qsel = 0, vsel = 0, vdu_dirty = 0, t_vdu = 0;
+    uint32_t gsel = 0, gcc = 0, gcr = 0, gtop = 0, gleft = 0, t_hist = 0, qsel = 0, vsel = 0, vdu_dirty = 0, t_vdu = 0, t_cpu = 0, cpu_over = 0;
     int32_t oct = -1, e, shift_drawn = -1;
 
     int skip;
     if (settings_load(&gset, sizeof gset)) { gset.boots = 0; gset.phos = 0; gset.bright = 7; }   /* (none yet) */
     if (gset.phos >= NPHOS) gset.phos = 0;
     if (gset.bright > 10u) gset.bright = 7;
-    gset.eng &= 3u;
+    gset.eng &= 1u;
     push_eng();
     crt_init();
     batt_poll();                                /* (a first reading, so the header has one from the start) */
@@ -2498,6 +2521,12 @@ static void app_main(void)
             int ch = 0;
             if ((e = fm1_enc_take(ENC_KNOB1)) != 0) { gset.phos = (uint8_t)cl(gset.phos + (e > 0 ? 1 : -1), 0, NPHOS - 1); ch = 1; }
             if ((e = fm1_enc_take(ENC_KNOB2)) != 0) { gset.bright = (uint8_t)cl(gset.bright + e, 0, 10); ch = 1; }
+            if ((e = fm1_enc_take(ENC_KNOB3)) != 0 && (uint32_t)(e > 0) != (gset.eng & 1u)) {   /* the engine */
+                gset.eng = (uint8_t)(e > 0);
+                push_eng();
+                cpu_peak = 0; audio_us_max = 0;
+                dirty = 1; vdu_dirty = 1; t_vdu = fm1_ms;
+            }
             if (ch) { crt_build(); dirty = hdr_dirty = 1; vdu_dirty = 1; t_vdu = fm1_ms; }
         } else if (page == PG_GLOBAL) {
             int ch = 0;
@@ -2638,6 +2667,18 @@ static void app_main(void)
         fm1_led_key(BTN_SEQ, page == PG_GMAT);
         fm1_led_key(BTN_GLO, page == PG_GLOBAL);
 
+        if (fm1_ms - t_cpu >= 250u) {           /* the load: the worst block of the last 250 ms */
+            uint32_t us = audio_us_max;
+            audio_us_max = 0;
+            t_cpu = fm1_ms;
+            cpu_now = us * 100u / AUDIO_BUDGET_US;
+            if (cpu_now > cpu_peak) cpu_peak = cpu_now;
+            if ((gset.eng & 1u) && us > AUDIO_BUDGET_US * 9u / 10u && ++cpu_over >= 2u) {   /* HI-FI too heavy: back */
+                gset.eng = 0; push_eng(); cpu_peak = 0; cpu_over = 0;
+                vdu_dirty = 1; t_vdu = fm1_ms;
+                hmsg = "HI-FI TOO HEAVY: LO-FI"; t_hmsg = fm1_ms; hdr_dirty = dirty = 1;
+            } else if (us <= AUDIO_BUDGET_US * 9u / 10u) cpu_over = 0;
+        }
         if (fm1_ms - t_batt > 2000u) {          /* the battery, every 2 s, into the header when it changes */
             uint32_t now;
             t_batt = fm1_ms;

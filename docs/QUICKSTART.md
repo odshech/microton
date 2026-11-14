@@ -8,7 +8,7 @@ Arcturus S6 is an experimental system for generative, evolving soundscapes, not 
 
 **The Serge idea.** Serge synthesizers are built from small, general-purpose functions instead of fixed voices. A function generator can be an envelope, an LFO or a slew limiter depending on how it's patched; a gate can come from an LFO, a logic gate or the end of another envelope. The power is in the feedback: when modulators control each other, a few simple parts make patterns that never quite repeat. Arcturus S6 works the same way, with six Serge-style function generators, two sample-and-holds, a quadrature LFO, four gate generators with logic, and two patch matrices to connect them.
 
-**The sound.** The engine runs natively at 12 bit and 22.05kHz, with 8-bit wavetables and no smoothing, so it aliases and steps the way early digital instruments did. Two machines are its direct influences:
+**The sound.** By default (LO-FI; page 9, VDU, K3 switches to HI-FI) the engine runs natively at 12 bit and 22.05kHz, with 8-bit wavetables and no smoothing, so it aliases and steps the way early digital instruments did. Two machines are its direct influences:
 
 - **PPG Wave & Waveterm** (1981, 1983): gritty, stepped wavetables you sweep through, rather than clean modern ones.
 - **Fairlight CMI** (1979): low sample rates and short words, plus the look. The green phosphor screen, numbered pages and central index are taken from the Fairlight's monitor.
@@ -43,7 +43,7 @@ Eleven pages, each reachable from the index or its shortcut button.
 | 6 GATE GEN | LFO | Four gate generators: two square LFOs each (free or MIDI clock, rate, duty) into AND, NAND, OR, NOR, XOR, XNOR, plus a NOT. Shown as a live logic analyser. |
 | 7 MOD MATRIX | ARP | The EMS-style pin grid: 12 sources by every destination. K1 source, K2 destination, K3 depth (±), PLAY sets or pulls a pin. |
 | 8 GATE MATRIX | SEQ | Gate sources (logic outputs, EOCs, quantiser note gates) to gate destinations (FGs, S&Hs, logic inputs, reverb freeze). Pins light with live gate state. |
-| 9 GLOBAL | GLO | TUNING: 21 tunings and their scales, root, per-oscillator quantise and glide. OCT for VDU: phosphor colour, CRT brightness, a test card. |
+| 9 GLOBAL | GLO | TUNING: 21 tunings and their scales, root, per-oscillator quantise and glide. OCT for VDU: phosphor colour, CRT brightness, the engine (K3: LO-FI as above, or HI-FI: 16 bit, 44.1kHz, interpolated), the CPU load, a test card. |
 | R FX | FX | Four halves, stepped with FX or OCT: REVERB (a low-rate plate, freeze), DELAY (a shift register), FLANGER (its own LFO, 22 / 11k) and ROUTING (the order of the three, and links between them). Each effect has its own send per oscillator. |
 | D DISK | SAVE | A:\SYSTEM holds INIT and RANDOM, B:\PATCHES your 16 slots. SEL loads, SAVE saves (twice to overwrite), PLAY names a patch. |
 
