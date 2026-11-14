@@ -75,6 +75,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd dist
+          touch .nojekyll                # (Pages: serve the files as they are, no Jekyll build)
           git init -q -b arcturus-firmware
           git add .
           git -c user.name=github-actions -c user.email=actions@github.com commit -qm "arcturus-s6.fwsc from ${GITHUB_SHA::7}"
@@ -87,6 +88,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" --jq '.status' || echo "(no Pages build: is Pages on, from the branch arcturus-firmware?)"
-          sleep 30
+          sleep 60
           gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '"pages: " + .status + " " + .html_url + " (source " + .source.branch + .source.path + ")"' || true
           gh api "repos/${GITHUB_REPOSITORY}/pages/builds/latest" --jq '"latest build: " + .status + " " + (.error.message // "")' || true
