@@ -77,7 +77,7 @@ typedef struct {                                /* owned by the interrupt */
     uint32_t ph;
     volatile int32_t posq;                      /* wave position now, Q8 waves (the waveform page reads it) */
     int32_t amp, lp1, lp2, last;
-    int32_t hb[32];                             /* HI-FI: the last 32 samples at 88.2 kHz, for the decimator */
+    int32_t hb[64];                             /* HI-FI: the last 32 samples at 88.2 kHz, twice (no wrap to mask) */
     uint32_t hbp;
 } osc_st_t;
 static osc_par_t opar[NO];
@@ -290,11 +290,13 @@ static int32_t quantise(int32_t q, int32_t *id, int32_t *stepn)
  * flat to ~18 kHz, -26 dB at 26 kHz (what folds to 18 kHz), -110 dB past 30 kHz. h[] Q15: the odd taps either side
  * of the centre (the even ones are 0, the centre 0.5). Latency: 7.5 frames, the same for every voice. */
 static const int16_t HB_H[8] = {10281, -3050, 1441, -708, 321, -124, 35, -4};
-static inline __attribute__((always_inline)) int32_t hb_out(const int32_t *b, uint32_t p)   /* b[p]: the newest */
+static inline __attribute__((always_inline)) int32_t hb_out(const int32_t *b, uint32_t p)   /* b[p + 32]: the newest */
 {
-    uint32_t c = p - 15u, k;
-    int32_t a = b[c & 31u] << 14;
-    for (k = 0; k < 8u; k++) a += HB_H[k] * (b[(c - 2u * k - 1u) & 31u] + b[(c + 2u * k + 1u) & 31u]);
+    const int32_t *c = b + p + 17u;             /* the centre, 15 back: every tap within b[p + 2 .. p + 32] */
+    int32_t a = c[0] << 14;
+    a += HB_H[0] * (c[-1] + c[1]); a += HB_H[1] * (c[-3] + c[3]); a += HB_H[2] * (c[-5] + c[5]);
+    a += HB_H[3] * (c[-7] + c[7]); a += HB_H[4] * (c[-9] + c[9]); a += HB_H[5] * (c[-11] + c[11]);
+    a += HB_H[6] * (c[-13] + c[13]); a += HB_H[7] * (c[-15] + c[15]);
     return a >> 15;
 }
 #define OSC_READ(X_) do { \
@@ -528,8 +530,8 @@ static void render(int32_t *out)                /* SUB frames */
                 OSC_READ(x);
                 OSC_FOLD(x);
                 s->last = x;
-                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = xa;
-                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = x;
+                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = s->hb[s->hbp + 32u] = xa;
+                s->hbp = (s->hbp + 1u) & 31u; s->hb[s->hbp] = s->hb[s->hbp + 32u] = x;
                 x = hb_out(s->hb, s->hbp);
             }
             if (hc[o] < 127) {                   /* the hi cut: two one-poles, 12 dB */
@@ -569,6 +571,15 @@ static void render(int32_t *out)                /* SUB frames */
                 int32_t lk = (int32_t)(pos == 1u ? fx_link1 : fx_link2) * 258;
                 if (lk) for (i = 0; i < SUB; i++) x[i] += (wet[i] * lk) >> 15;
             }
+            if (!half && fx) {                  /* HI-FI: two one-poles before the reverb's / delay's 22 kHz, so */
+                static int32_t pf[2][2];        /* what is over 11 kHz does not fold back down into them */
+                int32_t *st = pf[fx - 1u], c = fx == 2u ? 23593 : 27853;   /* reverb ~5.7 kHz, delay ~8.5 kHz (-3 dB) */
+                for (i = 0; i < SUB; i++) {
+                    st[0] += ((x[i] - st[0]) * c) >> 15;
+                    st[1] += ((st[0] - st[1]) * c) >> 15;
+                    x[i] = st[1];
+                }
+            }
             if (fx == 0u) fl_run(x, wet, out, SUB, LUT_GGINC);
             else if (fx == 1u) {                /* the delay, frame by frame */
                 uint32_t dinc = LUT_DINC[cl(dlp.time + (acc[D_VERB(0)] >> 8), 0, 127)];   /* (on the matrix: DL TIME) */
@@ -587,6 +598,15 @@ static void render(int32_t *out)                /* SUB frames */
                 }
                 dl_w_v = dl_w;
             } else verb_run(x, out, SUB, &vm, wet);
+        }
+    }
+    if (!half) {                                /* HI-FI: no DC (some waves and the folders carry it; ~3 Hz high-pass) */
+        static int32_t dc_x[2], dc_y[2];        /* (y in Q8) */
+        for (i = 0; i < 2u * SUB; i++) {
+            uint32_t c = i & 1u;
+            dc_y[c] += ((out[i] - dc_x[c]) << 8) - (dc_y[c] >> 11);
+            dc_x[c] = out[i];
+            out[i] = dc_y[c] >> 8;
         }
     }
     if (!half)                                  /* HI-FI: a soft knee over 3/4 of full scale, not a hard clip */
