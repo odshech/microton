@@ -4,7 +4,7 @@ Arcturus S6 turns the M-VAVE FM-1 into a four-oscillator wavetable instrument th
 
 ## What it is
 
-Arcturus S6 is an experimental system for generative, evolving soundscapes, not a keyboard synth. There is no sequencer and no filter section: sound comes from four wavetable oscillators, and movement comes from modulators patched into the oscillators, into each other and into themselves.
+Arcturus S6 is an experimental system for generative, evolving soundscapes, not a keyboard synth. There is no filter section, and the sequencer (page S) is just two more sources to patch: sound comes from four wavetable oscillators, and movement comes from modulators patched into the oscillators, into each other and into themselves.
 
 **The Serge idea.** Serge synthesizers are built from small, general-purpose functions instead of fixed voices. A function generator can be an envelope, an LFO or a slew limiter depending on how it's patched; a gate can come from an LFO, a logic gate or the end of another envelope. The power is in the feedback: when modulators control each other, a few simple parts make patterns that never quite repeat. Arcturus S6 works the same way, with six Serge-style function generators, two sample-and-holds, a quadrature LFO, four gate generators with logic, and two patch matrices to connect them.
 
@@ -46,6 +46,7 @@ Eleven pages, each reachable from the index or its shortcut button.
 | 9 GLOBAL | GLO | TUNING: 21 tunings and their scales, root, per-oscillator quantise and glide. OCT for VDU: phosphor colour, CRT brightness, the engine (K3: LO-FI as above, or HI-FI: 16 bit, 44.1kHz, band-limited 16-bit tables, the voices at 88.2kHz so PM and the folders do not alias, a smooth reverb, a clean delay line up to 2 s, the flanger at full rate), the CPU load, a test card. |
 | R FX | FX | Four halves, stepped with FX or OCT: REVERB (a low-rate plate, freeze), DELAY (a shift register), FLANGER (its own LFO, 22 / 11k) and ROUTING (the order of the three, and links between them). Each effect has its own send per oscillator. |
 | D DISK | SAVE | A:\SYSTEM holds INIT and RANDOM, B:\PATCHES your 16 slots. SEL loads, SAVE saves (twice to overwrite), PLAY names a patch. |
+| S SEQUENCER | SEL + SEQ | The keys and a 16-step sequencer, as sources: KEYS and SEQ in the mod matrix (one semitone a key at depth +63), KEY GATE and SEQ GATE in the gate matrix. Nothing sounds different until you pin them. Keys play here (OCT shifts them); REC writes the keys into the steps from the cursor (SELECT); SEL alone makes a step a rest. K1 BPM (SEL+K1: MIDI clock), K2 length, K3 gate. PLAY runs; SEL+PLAY pins (or unpins) KEYS and SEQ on all four pitches. MIDI notes on any channel play KEYS from every page. |
 
 ## Patch ideas
 
