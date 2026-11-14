@@ -25,7 +25,8 @@ def main():
     if len(dump) != SIZE:
         print("the dump must be exactly 1 MiB (0x100000 bytes); it is 0x%X" % len(dump))
         return 1
-    identity, image = fu.parse_fwsc(Path(sys.argv[2]).read_bytes())
+    pkg = fu.Package.load(sys.argv[2])          # (its flash.bin, as the analysis and the restore read it)
+    identity, image = pkg.identity, pkg.flash
     if len(image) < APP_END:
         print("the package's flash image ends at 0x%X, before 0x%X: not a complete FM-1 package" % (len(image), APP_END))
         return 1
