@@ -242,6 +242,7 @@ static inline __attribute__((always_inline)) int32_t dl_frame(int32_t in, uint32
  * held. The time glides (~0.1 s): a turned TIME bends the pitch like tape. In the loop a gentle high cut (~6.6 kHz)
  * and the saturator: repeats that darken a little as they go, and never run away. */
 #define DLH_N 26000u
+#define DLH_ONE (1u << 16)                      /* one cell, Q16 */
 static int16_t dlh_buf[DLH_N] __attribute__((section(".pool")));
 static uint32_t dlh_w, dlh_ph, dlh_c, dlh_d, dlh_n;   /* write cell; clock phase, step (Q16 cells a frame); distance (Q16) */
 static int32_t dlh_acc, dlh_lp;
@@ -281,9 +282,9 @@ static void dlh_run(const int32_t *in, int32_t *out, int32_t *wet, uint32_t n, u
         pos = now + (DLH_N << 16) - dlh_d;
         if (pos >= (DLH_N << 16)) pos -= DLH_N << 16;
         y = dlh_read(pos);
-        if (dlh_ph >= 0x10000u) {               /* a tick: a new cell, the input averaged since the last, + feedback */
+        if (dlh_ph >= DLH_ONE) {               /* a tick: a new cell, the input averaged since the last, + feedback */
             int32_t x = dlh_acc / (int32_t)dlh_n;
-            dlh_ph -= 0x10000u;
+            dlh_ph -= DLH_ONE;
             dlh_lp += ((y - dlh_lp) * 27853) >> 15;
             dlh_buf[dlh_w] = qr16(softclip((x >> 1) + ((dlh_lp * fbg) >> 15)), mask);
             if (++dlh_w >= DLH_N) dlh_w = 0;
